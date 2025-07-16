@@ -1,9 +1,13 @@
 require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
-const { Client, Events, GatewayIntentBits, MessageFlags, Collection } = require('discord.js');
+const { createClient } = require('@supabase/supabase-js');
+const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const token = process.env.BOT_TOKEN;
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE;
 
+const supabase = createClient(supabaseUrl, supabaseKey);
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.commands = new Collection();
