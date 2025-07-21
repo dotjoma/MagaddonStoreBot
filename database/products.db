@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS products (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    image TEXT,
+    code TEXT NOT NULL UNIQUE,
+    price REAL DEFAULT 0.00,
+    initial_quantity INTEGER DEFAULT 0,
+    current_quantity INTEGER DEFAULT 0,
+    description TEXT DEFAULT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    is_discountable BOOLEAN DEFAULT FALSE,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

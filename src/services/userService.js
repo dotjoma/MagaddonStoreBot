@@ -73,8 +73,42 @@ async function getUserBalance(discordId) {
   return data;
 }
 
+async function getUserWithRoleAndCreatedAt(discordId) {
+  const uuidId = uuidv5(String(discordId), DISCORD_NAMESPACE);
+  const { data, error } = await supabase
+    .from('users')
+    .select('username, world_lock, total_spent, growid, role, created_at')
+    .eq('id', uuidId)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function deductWorldLocksAndAddSpent(discordId, amount) {
+  const uuidId = uuidv5(String(discordId), DISCORD_NAMESPACE);
+  // Fetch current values
+  const { data: user, error: fetchError } = await supabase
+    .from('users')
+    .select('world_lock, total_spent')
+    .eq('id', uuidId)
+    .single();
+  if (fetchError) throw fetchError;
+  const newWorldLock = (user.world_lock || 0) - amount;
+  const newTotalSpent = (user.total_spent || 0) + amount;
+  const { data, error } = await supabase
+    .from('users')
+    .update({ world_lock: newWorldLock, total_spent: newTotalSpent })
+    .eq('id', uuidId)
+    .select('world_lock, total_spent')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   createUser,
   setGrowID,
-  getUserBalance
+  getUserBalance,
+  getUserWithRoleAndCreatedAt,
+  deductWorldLocksAndAddSpent
 };

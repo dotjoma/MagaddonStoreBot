@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { getUserById } = require('../../services/supabaseService');
 const { BLACK, CRIMSON_RED } = require('../../colors/discordColors');
 
@@ -27,10 +27,10 @@ module.exports = {
           .addFields(fields);
         await interaction.reply({ embeds: [embed] });
       } else {
-        await interaction.reply('User not found.');
+        await interaction.reply({ content: 'User not found.', flags: MessageFlags.Ephemeral });
       }
     } catch (error) {
-      await interaction.reply('Error fetching user.');
+      await interaction.reply({ content: 'Error fetching user.', flags: MessageFlags.Ephemeral });
     }
   },
 };

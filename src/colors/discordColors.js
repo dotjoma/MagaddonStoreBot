@@ -2,6 +2,7 @@ const DISCORD_COLORS = {
   BLACK: 0x000000,
   CRIMSON_RED: 0xDC143C,
   RED: 0xFF0000,
+  BLUE: 0x3498DB,
 };
 
 module.exports = DISCORD_COLORS; 

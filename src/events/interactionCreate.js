@@ -1,19 +1,24 @@
-const { Events, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { createUser, setGrowID, getUserBalance } = require('../services/userService');
+const { Events, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, AttachmentBuilder } = require('discord.js');
+const { createUser, setGrowID, getUserBalance, getUserWithRoleAndCreatedAt } = require('../services/userService');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
-const { RED } = require('../colors/discordColors');
+const { BLACK, RED } = require('../colors/discordColors');
 const { v5: uuidv5 } = require('uuid');
 const DISCORD_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE);
-const { getWorldName } = require('../services/configService');
+const { getWorldName, getOwnerName, getBotName, setWorldName, setOwnerName, setBotName } = require('../services/configService');
+const { WORLDLOCK, DIAMONDLOCK, CHAR, SHOPCART, STATUSONLINE, OWNER, DONATION } = require('../emojis/discordEmojis');
+const { isAdmin } = require('../middleware/adminCheck');
+const { getAllProductsWithStock } = require('../services/productService');
+const { getAvailableInventoryItems, markInventoryItemsAsSold } = require('../services/inventoryService');
+const { deductWorldLocksAndAddSpent } = require('../services/userService');
 
 const setGrowIdRow = new ActionRowBuilder().addComponents(
 	new ButtonBuilder()
 		.setCustomId('set_growid')
 		.setLabel('Set GrowID')
 		.setStyle(ButtonStyle.Secondary)
-		.setEmoji('🌱')
+		.setEmoji('<:char:1239164095396319252>')
 );
 
 module.exports = {
@@ -23,20 +28,67 @@ module.exports = {
 			switch (interaction.customId) {
 				case 'buy':
 					try {
-						const user = await getUserBalance(interaction.user.id);
-						if (!user || !user.username) {
-							await interaction.reply({
-								content: 'You are not registered. Please set your GrowID first.',
-								components: [setGrowIdRow],
-								flags: MessageFlags.Ephemeral
-							});
+						let user;
+						try {
+							user = await getUserBalance(interaction.user.id);
+						} catch (error) {
+							if (error.code === 'PGRST116') {
+								const notRegisteredEmbed = new EmbedBuilder()
+									.setTitle('❌ Registration Required')
+									.setDescription('It looks like you haven\'t registered yet. Let\'s get you started!')
+									.setColor(RED)
+									.addFields([
+										{
+											name: '🔧 What to do next:',
+											value: [
+												'• Click the button below to set your GrowID',
+												'• Make sure your GrowID is correct',
+												'• Then you can access product purchases'
+											].join('\n'),
+											inline: false
+										}
+									])
+									.setFooter({
+										text: 'Need help? Contact our support team',
+										iconURL: interaction.client.user.displayAvatarURL()
+									})
+									.setTimestamp();
+								await interaction.reply({
+									embeds: [notRegisteredEmbed],
+									components: [setGrowIdRow],
+									flags: MessageFlags.Ephemeral
+								});
+								return;
+							}
+							throw error;
+						}
+						
+						// Fetch all products with stock and price
+						const products = await getAllProductsWithStock();
+						if (!products || products.length === 0) {
+							await interaction.reply({ content: 'No products available.', flags: MessageFlags.Ephemeral });
 							return;
 						}
-						await interaction.reply({ content: 'Buy button clicked! (To be implemented)', flags: MessageFlags.Ephemeral });
-					} catch (error) {
+						// Build select menu options
+						const options = products.map(p => ({
+							label: `${p.name} (${p.stock} in stock)` + (p.price ? ` - ${p.price} WL` : ''),
+							value: String(p.id),
+							description: p.code ? `Code: ${p.code}` : undefined
+						})).slice(0, 25); // Discord max 25 options
+						const selectMenu = new StringSelectMenuBuilder()
+							.setCustomId('buy_product_select')
+							.setPlaceholder('Select a product to buy')
+							.addOptions(options);
+						const row = new ActionRowBuilder().addComponents(selectMenu);
 						await interaction.reply({
-							content: 'You are not registered. Please set your GrowID first.',
-							components: [setGrowIdRow],
+							content: 'Select a product to buy:',
+							components: [row],
+							flags: MessageFlags.Ephemeral
+						});
+					} catch (error) {
+						console.error('Buy button error:', error);
+						await interaction.reply({
+							content: 'An error occurred while fetching products.',
 							flags: MessageFlags.Ephemeral
 						});
 					}
@@ -79,79 +131,300 @@ module.exports = {
 					await interaction.showModal(modal);
 					break;
 				}
-				case 'my_info':
-				case 'my_balance': {
+				case 'my_info': {
 					try {
-						const user = await getUserBalance(interaction.user.id);
+						const user = await getUserWithRoleAndCreatedAt(interaction.user.id);
+						
 						if (!user || !user.username) {
+							const notRegisteredEmbed = new EmbedBuilder()
+								.setTitle('🚫 Not Registered')
+								.setDescription('You need to set your GrowID to access your information.')
+								.setColor(RED)
+								.setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+								.setFooter({ 
+									text: 'Click the button below to get started',
+									iconURL: interaction.client.user.displayAvatarURL()
+								})
+								.setTimestamp();
+				
 							await interaction.reply({
-								content: 'You are not registered. Please set your GrowID first.',
+								embeds: [notRegisteredEmbed],
 								components: [setGrowIdRow],
 								flags: MessageFlags.Ephemeral
 							});
 							return;
 						}
-						const embed = new EmbedBuilder()
-							.setTitle('Your Info')
+				
+						// Format numbers with thousand separators
+						const formatNumber = (num) => {
+							return new Intl.NumberFormat('en-US').format(num || 0);
+						};
+				
+						// Create status badge based on spending
+						const getStatusBadge = (totalSpent) => {
+							if (totalSpent >= 10000) return '👑 VIP Customer';
+							if (totalSpent >= 5000) return '💎 Premium User';
+							if (totalSpent >= 1000) return '⭐ Valued Customer';
+							return '🌱 New Customer';
+						};
+				
+						const statusBadge = getStatusBadge(user.total_spent || 0);
+						const worldLockCount = formatNumber(user.world_lock || 0);
+						const totalSpent = formatNumber(user.total_spent || 0);
+						// Use role and created_at from DB
+						const accountType = user.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'Unknown';
+						const memberSince = user.created_at ? `<t:${Math.floor(new Date(user.created_at).getTime() / 1000)}:R>` : 'Unknown';
+						const userInfoEmbed = new EmbedBuilder()
+							.setTitle(`${interaction.user.displayName}'s Information`)
+							.setDescription(`${statusBadge}\n\nWelcome back to Magaddon Store!\n`)
 							.setColor(RED)
-							.setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+							.setThumbnail(interaction.user.displayAvatarURL({ dynamic: true, size: 256 }))
 							.addFields([
-								{ name: 'GrowID', value: user.growid ? '```' + user.growid + '```' : '*(not set)*', inline: false },
-								{ name: 'World Lock', value: '```' + String(user.world_lock ?? 0) + '```', inline: false },
-								{ name: 'Total Spent', value: '```' + String(user.total_spent ?? 0) + '```', inline: false }
-							]);
-						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+								{
+									name: `${CHAR} GrowID`,
+									value: `\`\`\`yaml\n${user.growid || 'Not Set'}\`\`\``,
+									inline: true
+								},
+								{
+									name: `${WORLDLOCK} World Locks`,
+									value: `\`\`\`css\n${worldLockCount} WL\`\`\``,
+									inline: true
+								},
+								{
+									name: `${SHOPCART} Total Spent`,
+									value: `\`\`\`css\n${totalSpent} WL\`\`\``,
+									inline: true
+								},
+								{
+									name: `${STATUSONLINE} Account Stats`,
+									value: [
+										`• **Registration Status:** Verified`,
+										`• **Account Type:** ${accountType}`,
+										`• **Member Since:** ${memberSince}`
+									].join('\n'),
+									inline: false
+								}
+							])
+							// .setImage("https://media.discordapp.net/attachments/1225818847672537139/1396541495380807690/magaddonstore.gif?ex=687e761e&is=687d249e&hm=ad61091f4373909101dab8b50ff02bee137a57d205d0228f63ca5d91cb20fcd4&=")
+							.setFooter({ 
+								text: 'Magaddon Store • Your trusted marketplace',
+								iconURL: interaction.client.user.displayAvatarURL()
+							})
+							.setTimestamp();
+				
+						await interaction.reply({ 
+							embeds: [userInfoEmbed],
+							flags: MessageFlags.Ephemeral 
+						});
+				
 					} catch (error) {
-						if (
+						console.error('User info fetch error:', error);
+				
+						// Enhanced error handling with specific error types
+						const isRegistrationError = (
 							(error.message && (
 								error.message.includes('No rows') ||
 								error.message.includes('multiple (or no) rows') ||
 								error.message.includes('Results contain 0 rows')
 							)) ||
 							error.code === 'PGRST116'
-						) {
+						);
+				
+						if (isRegistrationError) {
+							const registrationErrorEmbed = new EmbedBuilder()
+								.setTitle('❌ Registration Required')
+								.setDescription('It looks like you haven\'t registered yet. Let\'s get you started!')
+								.setColor(RED)
+								.setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+								.addFields([
+									{
+										name: '🔧 What to do next:',
+										value: [
+											'• Click the button below to set your GrowID',
+											'• Make sure your GrowID is correct',
+											'• Start enjoying our services!'
+										].join('\n'),
+										inline: false
+									}
+								])
+								.setFooter({ 
+									text: 'Need help? Contact our support team',
+									iconURL: interaction.client.user.displayAvatarURL()
+								})
+								.setTimestamp();
+				
 							await interaction.reply({
-								content: 'You are not registered. Please set your GrowID first.',
+								embeds: [registrationErrorEmbed],
 								components: [setGrowIdRow],
 								flags: MessageFlags.Ephemeral
 							});
 						} else {
-							console.error('Balance fetch error:', error);
-							await interaction.reply({ content: 'Could not fetch your info. Please try again later.', flags: MessageFlags.Ephemeral });
+							const systemErrorEmbed = new EmbedBuilder()
+								.setTitle('⚠️ System Error')
+								.setDescription('We encountered an issue while fetching your information.')
+								.setColor(RED)
+								.addFields([
+									{
+										name: '🔄 What you can try:',
+										value: [
+											'• Wait a moment and try again',
+											'• Check your internet connection',
+											'• Contact support if the issue persists'
+										].join('\n'),
+										inline: false
+									}
+								])
+								.setFooter({ 
+									text: 'Error ID: ' + Date.now(),
+									iconURL: interaction.client.user.displayAvatarURL()
+								})
+								.setTimestamp();
+				
+							await interaction.reply({ 
+								embeds: [systemErrorEmbed], 
+								flags: MessageFlags.Ephemeral 
+							});
 						}
 					}
 					break;
 				}
 				case 'deposit': {
 					try {
-						const user = await getUserBalance(interaction.user.id);
+						const user = await getUserWithRoleAndCreatedAt(interaction.user.id);
+						
 						if (!user || !user.username) {
+							const notRegisteredEmbed = new EmbedBuilder()
+								.setTitle('🚫 Not Registered')
+								.setDescription('You need to set your GrowID to access deposit information.')
+								.setColor(RED)
+								.setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+								.setFooter({ 
+									text: 'Click the button below to get started',
+									iconURL: interaction.client.user.displayAvatarURL()
+								})
+								.setTimestamp();
+				
 							await interaction.reply({
-								content: 'You are not registered. Please set your GrowID first.',
+								embeds: [notRegisteredEmbed],
 								components: [setGrowIdRow],
 								flags: MessageFlags.Ephemeral
 							});
 							return;
 						}
-						const worldName = await getWorldName();
-						if (!worldName) {
-							await interaction.reply({ content: 'No world name is set for deposit.', flags: MessageFlags.Ephemeral });
-							return;
-						}
-						const embed = new EmbedBuilder()
-							.setTitle('Deposit World')
-							.setDescription('Please deposit to the following world:')
+				
+						const [worldName, ownerName, botName] = await Promise.all([
+							getWorldName(),
+							getOwnerName(),
+							getBotName()
+						]);
+						const depositEmbed = new EmbedBuilder()
+							.setTitle(`${interaction.user.displayName}'s Deposit Instructions`)
+							.setDescription(
+								`• **Depo World**: \`${worldName || 'Not set'}\` ${DONATION}\n` +
+								`• **Owner Name**: \`${ownerName || 'Not set'}\` ${OWNER}\n` +
+								`• **Bot Name**: \`${botName || 'Not set'}\` ${CHAR}`
+							)
 							.setColor(RED)
+							.setThumbnail(interaction.user.displayAvatarURL({ dynamic: true, size: 256 }))
 							.addFields([
-								{ name: 'World Name', value: '```' + worldName + '```', inline: false }
-							]);
-						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
-					} catch (error) {
-						await interaction.reply({
-							content: 'You are not registered. Please set your GrowID first.',
-							components: [setGrowIdRow],
-							flags: MessageFlags.Ephemeral
+								{
+									name: `${SHOPCART} Deposit Instructions`,
+									value: [
+										`• **Step 1:** Visit the world \`${worldName}\``,
+										`• **Step 2:** Place your World Locks to donation box`,
+										`• **Step 3:** Take a screenshot as proof`,
+										`• **Step 4:** Wait for automatic processing`
+									].join('\n'),
+									inline: false
+								},
+								{
+									name: `⚠️ Important Notes`,
+									value: [
+										`• **Always screenshot** your deposit for proof`,
+										`• Processing time: Usually within **5-10 minutes**`,
+										`• Contact support if your deposit isn't processed`,
+										`• Only deposit World Locks, other items won't be credited`
+									].join('\n'),
+									inline: false
+								}
+							])
+							.setFooter({ 
+								text: 'Magaddon Store • Your trusted marketplace',
+								iconURL: interaction.client.user.displayAvatarURL()
+							})
+							.setTimestamp();
+				
+						await interaction.reply({ 
+							embeds: [depositEmbed], 
+							flags: MessageFlags.Ephemeral 
 						});
+				
+					} catch (error) {
+						console.error('Deposit info fetch error:', error);
+						const isRegistrationError = (
+							(error.message && (
+								error.message.includes('No rows') ||
+								error.message.includes('multiple (or no) rows') ||
+								error.message.includes('Results contain 0 rows')
+							)) ||
+							error.code === 'PGRST116'
+						);
+				
+						if (isRegistrationError) {
+							const registrationErrorEmbed = new EmbedBuilder()
+								.setTitle('❌ Registration Required')
+								.setDescription('It looks like you haven\'t registered yet. Let\'s get you started!')
+								.setColor(RED)
+								.setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
+								.addFields([
+									{
+										name: '🔧 What to do next:',
+										value: [
+											'• Click the button below to set your GrowID',
+											'• Make sure your GrowID is correct',
+											'• Then you can access deposit information'
+										].join('\n'),
+										inline: false
+									}
+								])
+								.setFooter({ 
+									text: 'Need help? Contact our support team',
+									iconURL: interaction.client.user.displayAvatarURL()
+								})
+								.setTimestamp();
+				
+							await interaction.reply({
+								embeds: [registrationErrorEmbed],
+								components: [setGrowIdRow],
+								flags: MessageFlags.Ephemeral
+							});
+						} else {
+							const systemErrorEmbed = new EmbedBuilder()
+								.setTitle('⚠️ System Error')
+								.setDescription('We encountered an issue while fetching deposit information.')
+								.setColor(RED)
+								.addFields([
+									{
+										name: '🔄 What you can try:',
+										value: [
+											'• Wait a moment and try again',
+											'• Check your internet connection',
+											'• Contact support if the issue persists'
+										].join('\n'),
+										inline: false
+									}
+								])
+								.setFooter({ 
+									text: 'Error ID: ' + Date.now(),
+									iconURL: interaction.client.user.displayAvatarURL()
+								})
+								.setTimestamp();
+				
+							await interaction.reply({ 
+								embeds: [systemErrorEmbed], 
+								flags: MessageFlags.Ephemeral 
+							});
+						}
 					}
 					break;
 				}
@@ -161,64 +434,538 @@ module.exports = {
 			return;
 		}
 
-		if (interaction.isModalSubmit() && interaction.customId === 'set_growid_modal') {
-			const growid = interaction.fields.getTextInputValue('growid').toLowerCase();
-			const emailInput = interaction.fields.fields.get('email')?.value;
-			const email = emailInput || 'not set';
-			const username = interaction.user.username;
-			const discordId = interaction.user.id;
-			const uuidId = uuidv5(String(discordId), DISCORD_NAMESPACE);
-			const password = crypto.randomBytes(16).toString('base64url');
+		if (interaction.isModalSubmit()) {
+			switch (interaction.customId) {
+				case 'set_growid_modal':
+					const discordId = interaction.user.id;
+					const uuidId = uuidv5(String(discordId), DISCORD_NAMESPACE);
+					const { data: existingUser } = await supabase
+						.from('users')
+						.select('id, email')
+						.eq('id', uuidId)
+						.single();
 
-			// Email validation (only if provided)
-			if (emailInput && !/^\S+@\S+\.\S+$/.test(emailInput)) {
-				await interaction.reply({ content: 'Invalid email address. Please enter a valid email (e.g., user@example.com).', flags: MessageFlags.Ephemeral });
-				return;
+					const modal = new ModalBuilder()
+						.setCustomId('set_growid_modal')
+						.setTitle('Set GrowID');
+
+					const growidInput = new TextInputBuilder()
+						.setCustomId('growid')
+						.setLabel('GrowID')
+						.setStyle(TextInputStyle.Short)
+						.setRequired(true);
+
+					if (!existingUser) {
+						const emailInput = new TextInputBuilder()
+							.setCustomId('email')
+							.setLabel('Email (optional, for website login)')
+							.setStyle(TextInputStyle.Short)
+							.setRequired(false);
+						modal.addComponents(
+							new ActionRowBuilder().addComponents(growidInput),
+							new ActionRowBuilder().addComponents(emailInput)
+						);
+					} else {
+						modal.addComponents(
+							new ActionRowBuilder().addComponents(growidInput)
+						);
+					}
+
+					await interaction.showModal(modal);
+					break;
+				case 'buy_quantity_modal_':
+					const productId = interaction.customId.replace('buy_quantity_modal_', '');
+					const quantityStr = interaction.fields.getTextInputValue('quantity');
+					const quantity = parseInt(quantityStr, 10);
+					if (isNaN(quantity) || quantity < 1 || quantity > 999999) {
+						await interaction.reply({ content: 'Invalid quantity. Please enter a number between 1 and 999999.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+					// Fetch product and user info
+					const [products, user] = await Promise.all([
+						getAllProductsWithStock(),
+						getUserBalance(interaction.user.id)
+					]);
+					const product = products.find(p => String(p.id) === productId);
+					if (!product) {
+						await interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+					if (quantity > product.stock) {
+						await interaction.reply({ content: `Not enough stock. Only ${product.stock} available.`, flags: MessageFlags.Ephemeral });
+						return;
+					}
+					const totalPrice = (product.price || 0) * quantity;
+					if ((user.world_lock || 0) < totalPrice) {
+						await interaction.reply({ content: `You do not have enough World Locks. You need ${totalPrice} WL, but you have ${user.world_lock || 0} WL.`, flags: MessageFlags.Ephemeral });
+						return;
+					}
+					// Fetch inventory items
+					const inventoryItems = await getAvailableInventoryItems(productId, quantity);
+					if (!inventoryItems || inventoryItems.length < quantity) {
+						await interaction.reply({ content: `Not enough inventory. Only ${inventoryItems.length} available.`, flags: MessageFlags.Ephemeral });
+						return;
+					}
+					// Prepare DM content as a txt file
+					const now = Date.now();
+					const safeProductName = product.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+					const filename = `purchased_from_MagaddonStore_${safeProductName}_${now}.txt`;
+					const fileContent = inventoryItems.map(item => item.data || 'No details').join('\n');
+					const file = Buffer.from(fileContent, 'utf-8');
+					const attachment = new AttachmentBuilder(file, { name: filename });
+					try {
+						await interaction.user.send({
+							content: `Thank you for your purchase! Here are your items for ${product.name}:`,
+							files: [attachment]
+						});
+					} catch (err) {
+						await interaction.reply({ content: 'Failed to send you a DM. Please make sure your DMs are open and try again. No World Locks were deducted.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+					// Mark inventory as sold and deduct world locks
+					const ids = inventoryItems.map(item => item.id);
+					await markInventoryItemsAsSold(ids);
+					await deductWorldLocksAndAddSpent(interaction.user.id, totalPrice);
+					await interaction.reply({ content: `Purchase successful! You bought ${quantity}x ${product.name} for ${totalPrice} WL. Check your DMs for your items.`, flags: MessageFlags.Ephemeral });
+					return;
+				case 'setdepo_modal':
+					if (!isAdmin(interaction.member)) {
+						await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+					const world = interaction.fields.getTextInputValue('world');
+					const owner = interaction.fields.getTextInputValue('owner');
+					const bot = interaction.fields.getTextInputValue('bot');
+					try {
+						await setWorldName(world);
+						await setOwnerName(owner);
+						await setBotName(bot);
+						const embed = new EmbedBuilder()
+							.setTitle('Depo Info Updated!')
+							.setDescription(
+								`**World:** ${world}\n` +
+								`**Owner:** ${owner}\n` +
+								`**Bot:** ${bot}`
+							)
+							.setColor(RED);
+						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+					} catch (error) {
+						await interaction.reply({ content: 'Failed to update depo info.', flags: MessageFlags.Ephemeral });
+					}
+					return;
+				case 'create_product_modal': {
+					if (!isAdmin(interaction.member)) {
+						await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+
+					const name = interaction.fields.getTextInputValue('name');
+					const code = interaction.fields.getTextInputValue('code');
+					const description = interaction.fields.getTextInputValue('description');
+					const price = parseInt(interaction.fields.getTextInputValue('price'), 10);
+
+					if (isNaN(price) || price < 0) {
+						await interaction.reply({ content: 'Invalid price. Please enter a valid number.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+
+					try {
+						const { data: product, error } = await supabase
+							.from('products')
+							.insert([
+								{
+									name,
+									code,
+									description,
+									price,
+									stock: 0
+								}
+							])
+							.select()
+							.single();
+
+						if (error) throw error;
+
+						const embed = new EmbedBuilder()
+							.setTitle('Product Created')
+							.setDescription('New product has been added successfully!')
+							.setColor(RED)
+							.addFields([
+								{ name: 'Name', value: name, inline: true },
+								{ name: 'Code', value: code, inline: true },
+								{ name: 'Price', value: `${price} WL`, inline: true },
+								{ name: 'Description', value: description }
+							]);
+
+						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+					} catch (error) {
+						console.error('Error creating product:', error);
+						await interaction.reply({ 
+							content: 'Failed to create product. Please try again or contact support.', 
+							flags: MessageFlags.Ephemeral 
+						});
+					}
+					break;
+				}
+				case 'update_product_modal_': {
+					if (!isAdmin(interaction.member)) {
+						await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+
+					const productId = interaction.customId.split('_').pop();
+					const name = interaction.fields.getTextInputValue('name');
+					const code = interaction.fields.getTextInputValue('code');
+					const description = interaction.fields.getTextInputValue('description');
+					const price = parseInt(interaction.fields.getTextInputValue('price'), 10);
+
+					if (isNaN(price) || price < 0) {
+						await interaction.reply({ content: 'Invalid price. Please enter a valid number.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+
+					try {
+						const { data: product, error } = await supabase
+							.from('products')
+							.update({
+								name,
+								code,
+								description,
+								price
+							})
+							.eq('id', productId)
+							.select()
+							.single();
+
+						if (error) throw error;
+
+						const embed = new EmbedBuilder()
+							.setTitle('Product Updated')
+							.setDescription('Product has been updated successfully!')
+							.setColor(RED)
+							.addFields([
+								{ name: 'Name', value: name, inline: true },
+								{ name: 'Code', value: code, inline: true },
+								{ name: 'Price', value: `${price} WL`, inline: true },
+								{ name: 'Description', value: description }
+							]);
+
+						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+					} catch (error) {
+						console.error('Error updating product:', error);
+						await interaction.reply({ 
+							content: 'Failed to update product. Please try again or contact support.', 
+							flags: MessageFlags.Ephemeral 
+						});
+					}
+					break;
+				}
 			}
+			return;
+		}
 
-			const { data: existingUser } = await supabase
-				.from('users')
-				.select('id, email')
-				.eq('id', uuidId)
-				.single();
+		if (interaction.isStringSelectMenu()) {
+			switch (interaction.customId) {
+				case 'buy_product_select':
+					const productId = interaction.values[0];
+					const product = await getAllProductsWithStock().then(products => products.find(p => String(p.id) === productId));
 
-			try {
-				if (!existingUser) {
-					await createUser({
-						id: discordId,
-						email,
-						username,
-						password,
-						growid
-					});
-					await interaction.reply({ content: 'Registration successful! Check your DMs for your credentials.', flags: MessageFlags.Ephemeral });
+					if (!product) {
+						await interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+						return;
+					}
 
-					const embed = new EmbedBuilder()
-						.setTitle('Your Account Credentials')
-						.setDescription('You can use these credentials to log in to the Magaddon store website.')
-						.setColor(RED)
-						.addFields([
-							{ name: 'Username', value: '```' + username + '```', inline: false },
-							{ name: 'Email', value: email === 'not set' ? '*(not set)*' : '```' + email + '```', inline: false },
-							{ name: 'GrowID', value: '```' + growid + '```', inline: false },
-							{ name: 'Password', value: `||${password}||`, inline: false }
-						]);
+					const modal = new ModalBuilder()
+						.setCustomId(`buy_quantity_modal_${product.id}`)
+						.setTitle(`Buy: ${product.name}`);
 
-					await interaction.user.send({ embeds: [embed] });
+					const quantityInput = new TextInputBuilder()
+						.setCustomId('quantity')
+						.setLabel(`How many would you like to buy? Stock: ${product.stock}`)
+						.setStyle(TextInputStyle.Short)
+						.setMinLength(1)
+						.setMaxLength(6)
+						.setRequired(true)
+						.setValue('1');
 
-				} else {
-					await setGrowID(discordId, growid);
-					await interaction.reply({ content: 'Your GrowID has been updated!', flags: MessageFlags.Ephemeral });
+					modal.addComponents(
+						new ActionRowBuilder()
+							.addComponents(quantityInput)
+					);
+
+					await interaction.showModal(modal);
+					break;
+				case 'view_product_select': {
+					if (!isAdmin(interaction.member)) {
+						await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+
+					const productId = interaction.values[0];
+					try {
+						const { data: product, error } = await supabase
+							.from('products')
+							.select('*')
+							.eq('id', productId)
+							.single();
+
+						if (error) throw error;
+
+						const embed = new EmbedBuilder()
+							.setTitle('Product Details')
+							.setColor(RED)
+							.addFields([
+								{ name: 'Name', value: product.name, inline: true },
+								{ name: 'Code', value: product.code, inline: true },
+								{ name: 'Price', value: `${product.price} WL`, inline: true },
+								{ name: 'Stock', value: String(product.stock || 0), inline: true },
+								{ name: 'Description', value: product.description || 'No description' }
+							]);
+
+						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+					} catch (error) {
+						console.error('Error fetching product:', error);
+						await interaction.reply({ 
+							content: 'Failed to fetch product details. Please try again or contact support.', 
+							flags: MessageFlags.Ephemeral 
+						});
+					}
+					break;
 				}
-			} catch (error) {
-				console.error('Registration error:', error);
-				let errorMsg = 'Registration or update failed. Please try again or contact support.';
-				if (error.message === 'Email is already registered.') {
-					errorMsg = 'That email is already registered. Please use a different email.';
-				} else if (error.message === 'Username is already taken.') {
-					errorMsg = 'That username is already taken. Please change your Discord username and try again.';
+				case 'update_product_select': {
+					if (!isAdmin(interaction.member)) {
+						await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+
+					const productId = interaction.values[0];
+					try {
+						const { data: product, error } = await supabase
+							.from('products')
+							.select('*')
+							.eq('id', productId)
+							.single();
+
+						if (error) throw error;
+
+						const modal = new ModalBuilder()
+							.setCustomId(`update_product_modal_${product.id}`)
+							.setTitle('Update Product');
+
+						const nameInput = new TextInputBuilder()
+							.setCustomId('name')
+							.setLabel('Product Name')
+							.setStyle(TextInputStyle.Short)
+							.setValue(product.name)
+							.setRequired(true);
+
+						const codeInput = new TextInputBuilder()
+							.setCustomId('code')
+							.setLabel('Product Code')
+							.setStyle(TextInputStyle.Short)
+							.setValue(product.code)
+							.setRequired(true);
+
+						const descriptionInput = new TextInputBuilder()
+							.setCustomId('description')
+							.setLabel('Product Description')
+							.setStyle(TextInputStyle.Paragraph)
+							.setValue(product.description || '')
+							.setRequired(true);
+
+						const priceInput = new TextInputBuilder()
+							.setCustomId('price')
+							.setLabel('Price (in World Locks)')
+							.setStyle(TextInputStyle.Short)
+							.setValue(String(product.price))
+							.setRequired(true);
+
+						modal.addComponents(
+							new ActionRowBuilder().addComponents(nameInput),
+							new ActionRowBuilder().addComponents(codeInput),
+							new ActionRowBuilder().addComponents(descriptionInput),
+							new ActionRowBuilder().addComponents(priceInput)
+						);
+
+						await interaction.showModal(modal);
+					} catch (error) {
+						console.error('Error fetching product for update:', error);
+						await interaction.reply({ 
+							content: 'Failed to fetch product details. Please try again or contact support.', 
+							flags: MessageFlags.Ephemeral 
+						});
+					}
+					break;
 				}
-				await interaction.reply({ content: errorMsg, flags: MessageFlags.Ephemeral });
+				case 'delete_product_select': {
+					if (!isAdmin(interaction.member)) {
+						await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+						return;
+					}
+
+					const productId = interaction.values[0];
+					try {
+						const { error } = await supabase
+							.from('products')
+							.delete()
+							.eq('id', productId);
+
+						if (error) throw error;
+
+						await interaction.reply({ 
+							content: 'Product has been deleted successfully!', 
+							flags: MessageFlags.Ephemeral 
+						});
+					} catch (error) {
+						console.error('Error deleting product:', error);
+						await interaction.reply({ 
+							content: 'Failed to delete product. Please try again or contact support.', 
+							flags: MessageFlags.Ephemeral 
+						});
+					}
+					break;
+				}
+				case 'product_action':
+					if (!isAdmin(interaction.member)) {
+						await interaction.reply({ 
+							content: 'You do not have permission to use this command.', 
+							flags: MessageFlags.Ephemeral 
+						});
+						return;
+					}
+
+					const action = interaction.values[0];
+					switch (action) {
+						case 'create': {
+							const modal = new ModalBuilder()
+								.setCustomId('create_product_modal')
+								.setTitle('Create New Product');
+
+							const nameInput = new TextInputBuilder()
+								.setCustomId('name')
+								.setLabel('Product Name')
+								.setStyle(TextInputStyle.Short)
+								.setRequired(true);
+
+							const codeInput = new TextInputBuilder()
+								.setCustomId('code')
+								.setLabel('Product Code')
+								.setStyle(TextInputStyle.Short)
+								.setRequired(true);
+
+							const descriptionInput = new TextInputBuilder()
+								.setCustomId('description')
+								.setLabel('Product Description')
+								.setStyle(TextInputStyle.Paragraph)
+								.setRequired(true);
+
+							const priceInput = new TextInputBuilder()
+								.setCustomId('price')
+								.setLabel('Price (in World Locks)')
+								.setStyle(TextInputStyle.Short)
+								.setRequired(true);
+
+							modal.addComponents(
+								new ActionRowBuilder().addComponents(nameInput),
+								new ActionRowBuilder().addComponents(codeInput),
+								new ActionRowBuilder().addComponents(descriptionInput),
+								new ActionRowBuilder().addComponents(priceInput)
+							);
+
+							await interaction.showModal(modal);
+							break;
+						}
+						case 'read': {
+							const products = await getAllProductsWithStock();
+							if (!products || products.length === 0) {
+								await interaction.reply({ 
+									content: 'No products available.', 
+									flags: MessageFlags.Ephemeral 
+								});
+								return;
+							}
+
+							const selectMenu = new StringSelectMenuBuilder()
+								.setCustomId('view_product_select')
+								.setPlaceholder('Select a product to view')
+								.addOptions(
+									products.map(p => ({
+										label: p.name,
+										value: String(p.id),
+										description: `Code: ${p.code || p.id}`
+									}))
+								);
+
+							const row = new ActionRowBuilder().addComponents(selectMenu);
+							await interaction.reply({
+								content: 'Select a product to view:',
+								components: [row],
+								flags: MessageFlags.Ephemeral
+							});
+							break;
+						}
+						case 'update': {
+							const products = await getAllProductsWithStock();
+							if (!products || products.length === 0) {
+								await interaction.reply({ 
+									content: 'No products available to update.', 
+									flags: MessageFlags.Ephemeral 
+								});
+								return;
+							}
+
+							const selectMenu = new StringSelectMenuBuilder()
+								.setCustomId('update_product_select')
+								.setPlaceholder('Select a product to update')
+								.addOptions(
+									products.map(p => ({
+										label: p.name,
+										value: String(p.id),
+										description: `Code: ${p.code || p.id}`
+									}))
+								);
+
+							const row = new ActionRowBuilder().addComponents(selectMenu);
+							await interaction.reply({
+								content: 'Select a product to update:',
+								components: [row],
+								flags: MessageFlags.Ephemeral
+							});
+							break;
+						}
+						case 'delete': {
+							const products = await getAllProductsWithStock();
+							if (!products || products.length === 0) {
+								await interaction.reply({ 
+									content: 'No products available to delete.', 
+									flags: MessageFlags.Ephemeral 
+								});
+								return;
+							}
+
+							const selectMenu = new StringSelectMenuBuilder()
+								.setCustomId('delete_product_select')
+								.setPlaceholder('Select a product to delete')
+								.addOptions(
+									products.map(p => ({
+										label: p.name,
+										value: String(p.id),
+										description: `Code: ${p.code || p.id}`
+									}))
+								);
+
+							const row = new ActionRowBuilder().addComponents(selectMenu);
+							await interaction.reply({
+								content: '⚠️ **Warning**: This action cannot be undone. Select a product to delete:',
+								components: [row],
+								flags: MessageFlags.Ephemeral
+							});
+							break;
+						}
+					}
+					break;
+				default:
+					await interaction.reply({ content: 'Unknown menu interaction.', flags: MessageFlags.Ephemeral });
 			}
 			return;
 		}

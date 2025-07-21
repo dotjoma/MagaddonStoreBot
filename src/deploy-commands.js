@@ -31,9 +31,28 @@ for (const folder of commandFolders) {
 // Construct and prepare an instance of the REST module
 const rest = new REST().setToken(token);
 
+// Remove all global and guild commands before deploying new ones
+async function clearAllCommands() {
+	try {
+		// Remove all global commands
+		await rest.put(Routes.applicationCommands(clientId), { body: [] });
+		console.log('Cleared all global commands.');
+	} catch (e) {
+		console.warn('No global commands to clear or error clearing global commands:', e.message);
+	}
+	try {
+		// Remove all guild commands
+		await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [] });
+		console.log('Cleared all guild commands.');
+	} catch (e) {
+		console.warn('No guild commands to clear or error clearing guild commands:', e.message);
+	}
+}
+
 // and deploy your commands!
 (async () => {
 	try {
+		await clearAllCommands();
 		console.log(`Started refreshing ${commands.length} application (/) commands.`);
 
 		// The put method is used to fully refresh all commands in the guild with the current set

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { getWorldName } = require('../../services/configService');
 const { RED } = require('../../colors/discordColors');
 
@@ -10,7 +10,7 @@ module.exports = {
     try {
       const worldName = await getWorldName();
       if (!worldName) {
-        await interaction.reply({ content: 'No world name is set for deposit.', flags: 64 });
+        await interaction.reply({ content: 'No world name is set for deposit.', flags: MessageFlags.Ephemeral });
         return;
       }
       const embed = new EmbedBuilder()
@@ -20,9 +20,9 @@ module.exports = {
         .addFields([
           { name: 'World Name', value: '```' + worldName + '```', inline: false }
         ]);
-      await interaction.reply({ embeds: [embed], flags: 64 });
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch (error) {
-      await interaction.reply({ content: 'Failed to fetch the world name.', flags: 64 });
+      await interaction.reply({ content: 'Failed to fetch the world name.', flags: MessageFlags.Ephemeral });
     }
   },
 }; 

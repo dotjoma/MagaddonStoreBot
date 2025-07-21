@@ -45,9 +45,32 @@ async function getStockForProduct(product_id) {
   return count;
 }
 
+async function getAvailableInventoryItems(product_id, limit) {
+  const { data, error } = await supabase
+    .from('inventory')
+    .select('*')
+    .eq('product_id', product_id)
+    .eq('is_sold', false)
+    .limit(limit);
+  if (error) throw error;
+  return data;
+}
+
+async function markInventoryItemsAsSold(ids) {
+  const { data, error } = await supabase
+    .from('inventory')
+    .update({ is_sold: true, sold_at: new Date().toISOString() })
+    .in('id', ids)
+    .select();
+  if (error) throw error;
+  return data;
+}
+
 module.exports = {
   getAllInventory,
   getAvailableInventoryItem,
+  getAvailableInventoryItems,
   markInventoryItemAsSold,
+  markInventoryItemsAsSold,
   getStockForProduct
 }; 
