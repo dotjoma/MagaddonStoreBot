@@ -3,13 +3,13 @@ const { createUser, setGrowID, getUserBalance, getUserWithRoleAndCreatedAt } = r
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { BLACK, RED } = require('../colors/discordColors');
-const { v5: uuidv5 } = require('uuid');
+const { v5: uuidv5, v4: uuidv4 } = require('uuid');
 const DISCORD_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE);
 const { getWorldName, getOwnerName, getBotName, setWorldName, setOwnerName, setBotName } = require('../services/configService');
 const { WORLDLOCK, DIAMONDLOCK, CHAR, SHOPCART, STATUSONLINE, OWNER, DONATION } = require('../emojis/discordEmojis');
 const { isAdmin } = require('../middleware/adminCheck');
-const { getAllProductsWithStock } = require('../services/productService');
+const { getAllProductsWithStock, getTotalProducts, getActiveListings, getRevenueToday } = require('../services/productService');
 const { getAvailableInventoryItems, markInventoryItemsAsSold } = require('../services/inventoryService');
 const { deductWorldLocksAndAddSpent } = require('../services/userService');
 
@@ -24,6 +24,7 @@ const setGrowIdRow = new ActionRowBuilder().addComponents(
 module.exports = {
 	name: Events.InteractionCreate,
 	async execute(interaction) {
+		console.log('Interaction received:', interaction.type, interaction.customId || interaction.commandName);
 		if (interaction.isButton()) {
 			switch (interaction.customId) {
 				case 'buy':
@@ -86,11 +87,8 @@ module.exports = {
 							flags: MessageFlags.Ephemeral
 						});
 					} catch (error) {
-						console.error('Buy button error:', error);
-						await interaction.reply({
-							content: 'An error occurred while fetching products.',
-							flags: MessageFlags.Ephemeral
-						});
+						console.error('Error in buy button handler:', error);
+						await interaction.reply({ content: 'An error occurred while starting your purchase. Please try again or contact support.', flags: MessageFlags.Ephemeral });
 					}
 					break;
 				case 'set_growid': {
@@ -473,61 +471,6 @@ module.exports = {
 
 					await interaction.showModal(modal);
 					break;
-				case 'buy_quantity_modal_':
-					const productId = interaction.customId.replace('buy_quantity_modal_', '');
-					const quantityStr = interaction.fields.getTextInputValue('quantity');
-					const quantity = parseInt(quantityStr, 10);
-					if (isNaN(quantity) || quantity < 1 || quantity > 999999) {
-						await interaction.reply({ content: 'Invalid quantity. Please enter a number between 1 and 999999.', flags: MessageFlags.Ephemeral });
-						return;
-					}
-					// Fetch product and user info
-					const [products, user] = await Promise.all([
-						getAllProductsWithStock(),
-						getUserBalance(interaction.user.id)
-					]);
-					const product = products.find(p => String(p.id) === productId);
-					if (!product) {
-						await interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
-						return;
-					}
-					if (quantity > product.stock) {
-						await interaction.reply({ content: `Not enough stock. Only ${product.stock} available.`, flags: MessageFlags.Ephemeral });
-						return;
-					}
-					const totalPrice = (product.price || 0) * quantity;
-					if ((user.world_lock || 0) < totalPrice) {
-						await interaction.reply({ content: `You do not have enough World Locks. You need ${totalPrice} WL, but you have ${user.world_lock || 0} WL.`, flags: MessageFlags.Ephemeral });
-						return;
-					}
-					// Fetch inventory items
-					const inventoryItems = await getAvailableInventoryItems(productId, quantity);
-					if (!inventoryItems || inventoryItems.length < quantity) {
-						await interaction.reply({ content: `Not enough inventory. Only ${inventoryItems.length} available.`, flags: MessageFlags.Ephemeral });
-						return;
-					}
-					// Prepare DM content as a txt file
-					const now = Date.now();
-					const safeProductName = product.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-					const filename = `purchased_from_MagaddonStore_${safeProductName}_${now}.txt`;
-					const fileContent = inventoryItems.map(item => item.data || 'No details').join('\n');
-					const file = Buffer.from(fileContent, 'utf-8');
-					const attachment = new AttachmentBuilder(file, { name: filename });
-					try {
-						await interaction.user.send({
-							content: `Thank you for your purchase! Here are your items for ${product.name}:`,
-							files: [attachment]
-						});
-					} catch (err) {
-						await interaction.reply({ content: 'Failed to send you a DM. Please make sure your DMs are open and try again. No World Locks were deducted.', flags: MessageFlags.Ephemeral });
-						return;
-					}
-					// Mark inventory as sold and deduct world locks
-					const ids = inventoryItems.map(item => item.id);
-					await markInventoryItemsAsSold(ids);
-					await deductWorldLocksAndAddSpent(interaction.user.id, totalPrice);
-					await interaction.reply({ content: `Purchase successful! You bought ${quantity}x ${product.name} for ${totalPrice} WL. Check your DMs for your items.`, flags: MessageFlags.Ephemeral });
-					return;
 				case 'setdepo_modal':
 					if (!isAdmin(interaction.member)) {
 						await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
@@ -577,8 +520,7 @@ module.exports = {
 									name,
 									code,
 									description,
-									price,
-									stock: 0
+									price
 								}
 							])
 							.select()
@@ -587,15 +529,21 @@ module.exports = {
 						if (error) throw error;
 
 						const embed = new EmbedBuilder()
-							.setTitle('Product Created')
-							.setDescription('New product has been added successfully!')
+							.setTitle('🎉 Product Created')
+							.setDescription('• A new product has been added successfully!')
 							.setColor(RED)
+							.setThumbnail('https://cdn-icons-png.flaticon.com/512/3081/3081559.png')
 							.addFields([
-								{ name: 'Name', value: name, inline: true },
-								{ name: 'Code', value: code, inline: true },
-								{ name: 'Price', value: `${price} WL`, inline: true },
-								{ name: 'Description', value: description }
-							]);
+								{ name: 'Name', value: `\`${name}\``, inline: true },
+								{ name: 'Code', value: `\`${code}\``, inline: true },
+								{ name: 'Price', value: `\`${price} ${WORLDLOCK}\``, inline: true },
+								{ name: 'Description', value: description, inline: false }
+							])
+							.setFooter({
+								text: 'Magaddon Store • Product Management',
+								iconURL: interaction.client.user.displayAvatarURL()
+							})
+							.setTimestamp();
 
 						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 					} catch (error) {
@@ -650,6 +598,10 @@ module.exports = {
 								{ name: 'Description', value: description }
 							]);
 
+						if (product.image) {
+							embed.setThumbnail(product.image);
+						}
+
 						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 					} catch (error) {
 						console.error('Error updating product:', error);
@@ -661,39 +613,221 @@ module.exports = {
 					break;
 				}
 			}
+			if (interaction.isModalSubmit() && interaction.customId.startsWith('buy_quantity_modal_')) {
+				console.log('buy_quantity_modal_triggered');
+				try {
+					console.log('Extracting productId from customId');
+					const productId = interaction.customId.replace('buy_quantity_modal_', '');
+					const quantityStr = interaction.fields.getTextInputValue('quantity');
+					console.log('Parsing quantity:', quantityStr);
+					const quantity = parseInt(quantityStr, 10);
+					if (isNaN(quantity) || quantity < 1 || quantity > 999999) {
+						console.log('Invalid quantity');
+						if (interaction.replied || interaction.deferred) {
+							await interaction.followUp({ content: 'Invalid quantity. Please enter a number between 1 and 999999.', flags: MessageFlags.Ephemeral });
+						} else {
+							await interaction.reply({ content: 'Invalid quantity. Please enter a number between 1 and 999999.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+					console.log('Fetching products and user balance');
+					const [products, user] = await Promise.all([
+						getAllProductsWithStock(),
+						getUserBalance(interaction.user.id)
+					]);
+					console.log('Products fetched:', products.length);
+					console.log('User fetched:', user);
+					const product = products.find(p => String(p.id) === productId);
+					if (!product) {
+						console.log('Product not found');
+						if (interaction.replied || interaction.deferred) {
+							await interaction.followUp({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+						} else {
+							await interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+					if (quantity > product.stock) {
+						console.log('Not enough stock');
+						if (interaction.replied || interaction.deferred) {
+							await interaction.followUp({ content: `Not enough stock. Only ${product.stock} available.`, flags: MessageFlags.Ephemeral });
+						} else {
+							await interaction.reply({ content: `Not enough stock. Only ${product.stock} available.`, flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+					const totalPrice = (product.price || 0) * quantity;
+					if ((user.world_lock || 0) < totalPrice) {
+						console.log('Not enough World Locks');
+						if (interaction.replied || interaction.deferred) {
+							await interaction.followUp({ content: `You do not have enough World Locks. You need ${totalPrice} WL, but you have ${user.world_lock || 0} WL.`, flags: MessageFlags.Ephemeral });
+						} else {
+							await interaction.reply({ content: `You do not have enough World Locks. You need ${totalPrice} WL, but you have ${user.world_lock || 0} WL.`, flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+					console.log('Fetching inventory items');
+					const inventoryItems = await getAvailableInventoryItems(productId, quantity);
+					console.log('Inventory items fetched:', inventoryItems.length);
+					if (!inventoryItems || inventoryItems.length < quantity) {
+						console.log('Not enough inventory');
+						if (interaction.replied || interaction.deferred) {
+							await interaction.followUp({ content: `Not enough inventory. Only ${inventoryItems.length} available.`, flags: MessageFlags.Ephemeral });
+						} else {
+							await interaction.reply({ content: `Not enough inventory. Only ${inventoryItems.length} available.`, flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+					// Prepare DM content as a txt file
+					const now = Date.now();
+					const safeProductName = product.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+					const filename = `purchased_from_MagaddonStore_${safeProductName}_${now}.txt`;
+					const fileContent = inventoryItems.map(item => item.data || 'No details').join('\n');
+					const file = Buffer.from(fileContent, 'utf-8');
+					const attachment = new AttachmentBuilder(file, { name: filename });
+					try {
+						console.log('Attempting to send DM to user');
+						await interaction.user.send({
+							content: `Thank you for your purchase! Here are your items for ${product.name}:`,
+							files: [attachment]
+						});
+						console.log('DM sent successfully');
+					} catch (err) {
+						console.log('Failed to send DM:', err);
+						if (interaction.replied || interaction.deferred) {
+							await interaction.followUp({ content: 'Failed to send you a DM. Please make sure your DMs are open and try again. No World Locks were deducted.', flags: MessageFlags.Ephemeral });
+						} else {
+							await interaction.reply({ content: 'Failed to send you a DM. Please make sure your DMs are open and try again. No World Locks were deducted.', flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+					console.log('Marking inventory as sold');
+					const ids = inventoryItems.map(item => item.id);
+					await markInventoryItemsAsSold(ids);
+					console.log('Deducting world locks and adding spent');
+					await deductWorldLocksAndAddSpent(interaction.user.id, totalPrice);
+
+					// Insert order into database
+					console.log('Inserting order into database');
+					const orderNumber = `ORD-${now}-${uuidv4().slice(0, 10)}`;
+					const { data: order, error: orderError } = await supabase
+						.from('orders')
+						.insert([{
+							user_id: uuidv5(String(interaction.user.id), DISCORD_NAMESPACE),
+							product_id: product.id,
+							inventory_id: inventoryItems[0]?.id || null, // or null if multiple
+							order_number: orderNumber,
+							quantity,
+							unit_price: product.price,
+							total_amount: totalPrice,
+							status: 'completed',
+							payment_method: 'world_lock',
+							notes: `Inventory data sent: ${fileContent}`
+						}])
+						.select()
+						.single();
+					if (orderError) {
+						// Log the error and the data being inserted
+						console.error('Order insert error:', orderError);
+						console.error('Order insert data:', {
+							user_id: uuidv5(String(interaction.user.id), DISCORD_NAMESPACE),
+							product_id: product.id,
+							inventory_id: inventoryItems[0]?.id || null,
+							order_number: orderNumber,
+							quantity,
+							unit_price: product.price,
+							total_amount: totalPrice,
+							status: 'completed',
+							payment_method: 'world_lock',
+							notes: `Inventory data sent: ${fileContent}`
+						});
+						// Reply to the user with a truncated error message
+						const errMsg = orderError.message || orderError.details || JSON.stringify(orderError);
+						if (interaction.replied || interaction.deferred) {
+							await interaction.followUp({ content: `Order error: ${errMsg.slice(0, 300)}`, flags: MessageFlags.Ephemeral });
+						} else {
+							await interaction.reply({ content: `Order error: ${errMsg.slice(0, 300)}`, flags: MessageFlags.Ephemeral });
+						}
+						return;
+					}
+					console.log('Order inserted successfully');
+					if (interaction.replied || interaction.deferred) {
+						await interaction.followUp({ content: `Purchase successful! You bought ${quantity}x ${product.name} for ${totalPrice} WL. Check your DMs for your items.`, flags: MessageFlags.Ephemeral });
+					} else {
+						await interaction.reply({ content: `Purchase successful! You bought ${quantity}x ${product.name} for ${totalPrice} WL. Check your DMs for your items.`, flags: MessageFlags.Ephemeral });
+					}
+
+					// Send purchase log to PURCHASE_HISTORY_CHANNEL
+					const purchaseHistoryChannelId = process.env.PURCHASE_HISTORY_CHANNEL;
+					const purchaseHistoryChannel = interaction.client.channels.cache.get(purchaseHistoryChannelId);
+					const realOrderNumber = order ? order.order_number : orderNumber;
+					const purchaseEmbed = new EmbedBuilder()
+						.setTitle(`#Order Number: ${realOrderNumber}`)
+						.setColor(RED)
+						.addFields(
+							{ name: '• Buyer', value: `<@${interaction.user.id}>`, inline: true },
+							{ name: '• Product', value: product.name, inline: true },
+							{ name: '• Total Price', value: `\`${totalPrice} ${WORLDLOCK}\``, inline: true },
+							{ name: '\u200B', value: 'Thank you for purchasing our product!' }
+						)
+						.setFooter({ 
+							text: 'Magaddon Store • Your trusted marketplace',
+							iconURL: interaction.client.user.displayAvatarURL()
+						})
+						.setTimestamp();
+					if (purchaseHistoryChannel) {
+						purchaseHistoryChannel.send({ embeds: [purchaseEmbed] });
+					}
+					console.log('Purchase log sent to channel');
+					return;
+				} catch (error) {
+					console.error('Error in buy_quantity_modal_:', error);
+					if (interaction.replied || interaction.deferred) {
+						await interaction.followUp({ content: 'An error occurred while processing your purchase. Please try again or contact support.', flags: MessageFlags.Ephemeral });
+					} else {
+						await interaction.reply({ content: 'An error occurred while processing your purchase. Please try again or contact support.', flags: MessageFlags.Ephemeral });
+					}
+					return;
+				}
+			}
 			return;
 		}
 
 		if (interaction.isStringSelectMenu()) {
 			switch (interaction.customId) {
 				case 'buy_product_select':
-					const productId = interaction.values[0];
-					const product = await getAllProductsWithStock().then(products => products.find(p => String(p.id) === productId));
+					try {
+						const productId = interaction.values[0];
+						const product = await getAllProductsWithStock().then(products => products.find(p => String(p.id) === productId));
 
-					if (!product) {
-						await interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
-						return;
+						if (!product) {
+							await interaction.reply({ content: 'Product not found.', flags: MessageFlags.Ephemeral });
+							return;
+						}
+
+						const modal = new ModalBuilder()
+							.setCustomId(`buy_quantity_modal_${product.id}`)
+							.setTitle(`Buy: ${product.name}`);
+
+						const quantityInput = new TextInputBuilder()
+							.setCustomId('quantity')
+							.setLabel(`How many would you like to buy? Stock: ${product.stock}`)
+							.setStyle(TextInputStyle.Short)
+							.setMinLength(1)
+							.setMaxLength(6)
+							.setRequired(true)
+							.setValue('1');
+
+						modal.addComponents(
+							new ActionRowBuilder()
+								.addComponents(quantityInput)
+						);
+
+						await interaction.showModal(modal);
+					} catch (error) {
+						console.error('Error in buy_product_select:', error);
+						await interaction.reply({ content: 'An error occurred while processing your product selection.', flags: MessageFlags.Ephemeral });
 					}
-
-					const modal = new ModalBuilder()
-						.setCustomId(`buy_quantity_modal_${product.id}`)
-						.setTitle(`Buy: ${product.name}`);
-
-					const quantityInput = new TextInputBuilder()
-						.setCustomId('quantity')
-						.setLabel(`How many would you like to buy? Stock: ${product.stock}`)
-						.setStyle(TextInputStyle.Short)
-						.setMinLength(1)
-						.setMaxLength(6)
-						.setRequired(true)
-						.setValue('1');
-
-					modal.addComponents(
-						new ActionRowBuilder()
-							.addComponents(quantityInput)
-					);
-
-					await interaction.showModal(modal);
 					break;
 				case 'view_product_select': {
 					if (!isAdmin(interaction.member)) {
@@ -703,13 +837,9 @@ module.exports = {
 
 					const productId = interaction.values[0];
 					try {
-						const { data: product, error } = await supabase
-							.from('products')
-							.select('*')
-							.eq('id', productId)
-							.single();
-
-						if (error) throw error;
+						const products = await getAllProductsWithStock();
+						const product = products.find(p => String(p.id) === productId);
+						if (!product) throw new Error('Product not found');
 
 						const embed = new EmbedBuilder()
 							.setTitle('Product Details')
@@ -717,10 +847,13 @@ module.exports = {
 							.addFields([
 								{ name: 'Name', value: product.name, inline: true },
 								{ name: 'Code', value: product.code, inline: true },
-								{ name: 'Price', value: `${product.price} WL`, inline: true },
-								{ name: 'Stock', value: String(product.stock || 0), inline: true },
-								{ name: 'Description', value: product.description || 'No description' }
+								{ name: 'Price', value: `${product.price} ${WORLDLOCK}`, inline: true },
+								{ name: 'Stock', value: String(product.stock), inline: true },
+								{ name: 'Description', value: product.description || 'No description', inline: false }
 							]);
+						if (product.image) {
+							embed.setThumbnail(product.image);
+						}
 
 						await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 					} catch (error) {
@@ -740,13 +873,9 @@ module.exports = {
 
 					const productId = interaction.values[0];
 					try {
-						const { data: product, error } = await supabase
-							.from('products')
-							.select('*')
-							.eq('id', productId)
-							.single();
-
-						if (error) throw error;
+						const products = await getAllProductsWithStock();
+						const product = products.find(p => String(p.id) === productId);
+						if (!product) throw new Error('Product not found');
 
 						const modal = new ModalBuilder()
 							.setCustomId(`update_product_modal_${product.id}`)
@@ -805,6 +934,10 @@ module.exports = {
 
 					const productId = interaction.values[0];
 					try {
+						const products = await getAllProductsWithStock();
+						const product = products.find(p => String(p.id) === productId);
+						if (!product) throw new Error('Product not found');
+
 						const { error } = await supabase
 							.from('products')
 							.delete()
@@ -813,7 +946,7 @@ module.exports = {
 						if (error) throw error;
 
 						await interaction.reply({ 
-							content: 'Product has been deleted successfully!', 
+							content: `Product '${product.name}' (Stock: ${product.stock}) has been deleted successfully!`, 
 							flags: MessageFlags.Ephemeral 
 						});
 					} catch (error) {
@@ -919,7 +1052,7 @@ module.exports = {
 								.setPlaceholder('Select a product to update')
 								.addOptions(
 									products.map(p => ({
-										label: p.name,
+										label: `${p.name} (Stock: ${p.stock})`,
 										value: String(p.id),
 										description: `Code: ${p.code || p.id}`
 									}))

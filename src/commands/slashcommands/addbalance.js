@@ -7,6 +7,7 @@ const { v5: uuidv5 } = require('uuid');
 const DISCORD_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const { RED } = require('../../colors/discordColors');
 const { WORLDLOCK } = require('../../emojis/discordEmojis');
+const { replyAdminError } = require('../../utils/embedHelpers');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -18,7 +19,7 @@ module.exports = {
       option.setName('amount').setDescription('Amount to add').setRequired(true)),
   async execute(interaction) {
     if (!(isAdmin(interaction.member) && isAuthorizedUser(interaction.user.id))) {
-      await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+      await replyAdminError(interaction);
       return;
     }
     const userObj = interaction.options.getUser('user');

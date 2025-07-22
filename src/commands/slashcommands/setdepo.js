@@ -1,13 +1,15 @@
 const { SlashCommandBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require('discord.js');
 const { isAdmin } = require('../../middleware/adminCheck');
+const { isAuthorizedUser } = require('../../middleware/authorizedUser');
+const { replyAdminError } = require('../../utils/embedHelpers');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('setdepo')
     .setDescription('Set depo world, owner, and bot name (admin only)'),
   async execute(interaction) {
-    if (!isAdmin(interaction.member)) {
-      await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+    if (!(isAdmin(interaction.member) && isAuthorizedUser(interaction.user.id))) {
+      await replyAdminError(interaction);
       return;
     }
     // Show modal for input

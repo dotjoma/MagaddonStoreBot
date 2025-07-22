@@ -1,0 +1,4 @@
+supabase migration new <migration_name>
+
+example:
+supabase migration new add-inventory-table

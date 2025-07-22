@@ -1,0 +1,7 @@
+CREATE TABLE blacklisted_tokens (
+    id SERIAL PRIMARY KEY,
+    token TEXT NOT NULL,
+    user_id INTEGER,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -1,0 +1,53 @@
+CREATE TABLE IF NOT EXISTS products (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    image TEXT,
+    code TEXT NOT NULL UNIQUE,
+    price REAL DEFAULT 0.00,
+    initial_quantity INTEGER DEFAULT 0,
+    current_quantity INTEGER DEFAULT 0,
+    description TEXT DEFAULT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    is_discountable BOOLEAN DEFAULT FALSE,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
+CREATE INDEX IF NOT EXISTS idx_products_price ON products(price);
+CREATE INDEX IF NOT EXISTS idx_products_created_at ON products(created_at);
+CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at);
+CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active);
+CREATE INDEX IF NOT EXISTS idx_products_is_deleted ON products(is_deleted);
+
+-- Add RLS (Row Level Security)
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+
+-- Allow all users to read products
+CREATE POLICY "Allow all to read products" ON products
+  FOR SELECT USING (true);
+
+-- Allow only admins to modify products
+CREATE POLICY "Admins can modify products" ON products
+  FOR ALL USING (
+    exists (
+      select 1 from users
+      where users.id = auth.uid() and users.role = 'admin'
+    )
+  );
+
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = NOW();
+   RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+DROP TRIGGER IF EXISTS set_updated_at ON products;
+
+CREATE TRIGGER set_updated_at
+BEFORE UPDATE ON products
+FOR EACH ROW
+EXECUTE PROCEDURE update_updated_at_column();

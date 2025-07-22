@@ -1,15 +1,17 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { getAllUsers } = require('../../services/supabaseService');
 const { isAdmin } = require('../../middleware/adminCheck');
+const { isAuthorizedUser } = require('../../middleware/authorizedUser');
 const { BLACK, CRIMSON_RED, RED } = require('../../colors/discordColors');
+const { replyAdminError } = require('../../utils/embedHelpers');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('getusers')
     .setDescription('Retrieve all users from the Supabase users table'),
   async execute(interaction) {
-    if (!isAdmin(interaction.member)) {
-      await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+    if (!(isAdmin(interaction.member) && isAuthorizedUser(interaction.user.id))) {
+      await replyAdminError(interaction);
       return;
     }
     try {

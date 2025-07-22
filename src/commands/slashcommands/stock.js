@@ -2,8 +2,10 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const { getAllProductsWithStock } = require('../../services/productService');
 const { RED } = require('../../colors/discordColors');
 const { isAdmin } = require('../../middleware/adminCheck');
+const { isAuthorizedUser } = require('../../middleware/authorizedUser');
 const fs = require('fs/promises');
 const path = require('path');
+const { replyAdminError } = require('../../utils/embedHelpers');
 
 const STOCK_JSON_PATH = path.join(__dirname, '../../../stockMessages.json');
 const stockMessageMap = new Map();
@@ -148,8 +150,8 @@ module.exports = {
     .setName('stock')
     .setDescription('Show the current product stock list.'),
   async execute(interaction) {
-    if (!isAdmin(interaction.member)) {
-      await interaction.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral });
+    if (!(isAdmin(interaction.member) && isAuthorizedUser(interaction.user.id))) {
+      await replyAdminError(interaction);
       return;
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
