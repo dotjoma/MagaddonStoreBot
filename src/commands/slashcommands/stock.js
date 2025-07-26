@@ -6,9 +6,13 @@ const { isAuthorizedUser } = require('../../middleware/authorizedUser');
 const fs = require('fs/promises');
 const path = require('path');
 const { replyAdminError } = require('../../utils/embedHelpers');
+const { REDARROW, FAQ, CHILLCROWN, INFO, WHITECROWN } = require('../../emojis/discordEmojis');
 
 const STOCK_JSON_PATH = path.join(__dirname, '../../../stockMessages.json');
 const stockMessageMap = new Map();
+
+// Track last update time for each channel
+const lastUpdateTimes = new Map();
 
 // Helper to read JSON file
 async function readStockJson() {
@@ -36,63 +40,81 @@ async function removeStockMessage(channelId) {
   await writeStockJson(json);
 }
 
+
+
 async function setupStockAutoUpdate(channel, message) {
+  console.log(`[Stock Auto-Update] Setting up auto-update for channel ${channel.id}`);
   // Clear any previous interval
   const entry = stockMessageMap.get(channel.id);
-  if (entry && entry.interval) clearInterval(entry.interval);
+  if (entry && entry.interval) {
+    console.log(`[Stock Auto-Update] Clearing previous interval for channel ${channel.id}`);
+    clearInterval(entry.interval);
+  }
   // Set up periodic update every 5 seconds
   const FIRECHI = '<:firechi:1396706374322491473>';
   const ACROWN = '<:owner:1240203671548203049>';
   const WORLDLOCK = '<:wl:1237744867254472704>';
-  const AWARN = ':warning:';
   const BULLET = '•';
   const howToBuy =
-    `${AWARN} **HOW TO BUY** ${AWARN}\n` +
-    `${BULLET} Click Button **Set GrowID**\n` +
-    `${BULLET} Click Button **My Info** To Check Your Information\n` +
-    `${BULLET} Click Button **Deposit** To See World Deposit\n` +
-    `${BULLET} Click Button **Buy** For Buying The Items`;
+    `${FAQ} **HOW TO BUY** ${FAQ}\n` +
+    `${REDARROW} Click Button **Set GrowID**\n` +
+    `${REDARROW} Click Button **My Info** To Check Your Information\n` +
+    `${REDARROW} Click Button **Deposit** To See World Deposit\n` +
+    `${REDARROW} Click Button **Buy** For Buying The Items`;
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('buy')
       .setLabel('Buy')
       .setEmoji('🛒')
-      .setStyle(ButtonStyle.Secondary),
+      .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('set_growid')
       .setLabel('Set GrowID')
       .setEmoji('<:char:1239164095396319252>')
-      .setStyle(ButtonStyle.Secondary),
+      .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('my_info')
       .setLabel('My Info')
-      .setEmoji('ℹ️')
-      .setStyle(ButtonStyle.Secondary),
+      .setEmoji(INFO)
+      .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('deposit')
       .setLabel('Deposit')
       .setEmoji('<:mcworld:1240203040317767739>')
-      .setStyle(ButtonStyle.Secondary)
+      .setStyle(ButtonStyle.Danger)
   );
   const interval = setInterval(async () => {
     let updatedProducts;
     try {
+      console.log(`[Stock Auto-Update] Updating stock for channel ${channel.id}`);
       updatedProducts = await getAllProductsWithStock();
       if (!updatedProducts || updatedProducts.length === 0) {
+        console.log(`[Stock Auto-Update] No products found for channel ${channel.id}`);
         await message.edit({ content: 'No products in stock.', embeds: [], components: [] });
         return;
       }
-      const updatedLastUpdate = `<t:${Math.floor(Date.now() / 1000)}:R>`;
+      console.log(`[Stock Auto-Update] Found ${updatedProducts.length} products for channel ${channel.id}`);
+      const currentTime = Math.floor(Date.now() / 1000);
+      const now = new Date();
+      const manilaTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Manila"}));
+      const updatedLastUpdate = `${manilaTime.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit', 
+        second: '2-digit',
+        hour12: true 
+      })} (UTC+8)`;
+      lastUpdateTimes.set(channel.id, currentTime);
+      console.log(`[Stock Auto-Update] Timestamp: ${currentTime} -> ${updatedLastUpdate} | Manila time: ${manilaTime.toLocaleTimeString()}`);
       const updatedProductLines = updatedProducts.map(p =>
-        `${ACROWN} **${(p.name || '').toUpperCase()}** ${ACROWN}\n` +
-        `${BULLET} Code: \`${p.code || p.id}\`\n` +
-        `${BULLET} Stock: **${p.stock ?? 0}**\n` +
-        `${BULLET} Price: **${p.price ?? 'N/A'}** ${WORLDLOCK}\n` +
-        `${BULLET} Description: ${p.description || 'No description'}\n` +
+        `${WHITECROWN} **${(p.name || '').toUpperCase()}** ${WHITECROWN}\n` +
+        `${REDARROW} Code: \`${p.code || p.id}\`\n` +
+        `${REDARROW} Stock: **${p.stock ?? 0}**\n` +
+        `${REDARROW} Price: **${p.price ?? 'N/A'}** ${WORLDLOCK}\n` +
+        `${REDARROW} Description: ${p.description || 'No description'}\n` +
         '--------------------------------------------'
       ).join('\n');
       const updatedEmbed = new EmbedBuilder()
-        .setTitle('PRODUCT LIST')
+        .setTitle(`${WHITECROWN} PRODUCT LIST ${WHITECROWN}`)
         .setDescription(
           `Last Update: ${updatedLastUpdate}\n` +
           '--------------------------------------------\n' +
@@ -100,10 +122,12 @@ async function setupStockAutoUpdate(channel, message) {
           '\n' +
           howToBuy
         )
-        .setColor(RED)
-        .setImage('https://media.discordapp.net/attachments/1225818847672537139/1251395315697979393/standard.gif?ex=68787e35&is=68772cb5&hm=1c528e9fe3ec08dcb5fdb63c0534c91ba4a847363a6cbd1a297e17b8cd576309&=');
+        .setColor(RED);
+        // .setImage('https://media.discordapp.net/attachments/1225818847672537139/1251395315697979393/standard.gif?ex=68787e35&is=68772cb5&hm=1c528e9fe3ec08dcb5fdb63c0534c91ba4a847363a6cbd1a297e17b8cd576309&=');
       await message.edit({ embeds: [updatedEmbed], components: [row], content: null });
+      console.log(`[Stock Auto-Update] Successfully updated stock for channel ${channel.id}`);
     } catch (err) {
+      console.error(`[Stock Auto-Update] Error updating stock for channel ${channel.id}:`, err);
       // If the error is Unknown Message, remove only this channel's entry and stop the interval
       if (err.code === 10008 || (err.rawError && err.rawError.code === 10008)) {
         await removeStockMessage(channel.id);
@@ -114,12 +138,13 @@ async function setupStockAutoUpdate(channel, message) {
           interval._loggedMissing = true;
         }
       } else {
-        console.log(`Error: `, err);
+        console.log(`[Stock Auto-Update] Non-critical error for channel ${channel.id}:`, err);
       }
     }
-  }, 5 * 1000);
+  }, (process.env.STOCK_UPDATE_INTERVAL || 60) * 1000);
   stockMessageMap.set(channel.id, { message, interval });
   await saveStockMessage(channel.id, message.id);
+  console.log(`[Stock Auto-Update] Auto-update setup complete for channel ${channel.id} (interval: ${process.env.STOCK_UPDATE_INTERVAL || 5}s)`);
 }
 
 // Helper to clear the entire JSON file
@@ -154,6 +179,7 @@ module.exports = {
       await replyAdminError(interaction);
       return;
     }
+    
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const channel = interaction.channel;
     let stockEntry = stockMessageMap.get(channel.id);
@@ -173,23 +199,33 @@ module.exports = {
     const WORLDLOCK = '<:wl:1237744867254472704>';
     const AWARN = ':warning:';
     const BULLET = '•';
-    const lastUpdate = `<t:${Math.floor(Date.now() / 1000)}:R>`;
+    const currentTime = Math.floor(Date.now() / 1000);
+    const now = new Date();
+    const manilaTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Manila"}));
+    const lastUpdate = `${manilaTime.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      second: '2-digit',
+      hour12: true 
+    })} (UTC+8)`;
+    lastUpdateTimes.set(channel.id, currentTime);
+    console.log(`[Stock Command] Initial timestamp: ${currentTime} -> ${lastUpdate} | Manila time: ${manilaTime.toLocaleTimeString()}`);
     const productLines = products.map(p =>
-      `${ACROWN} **${(p.name || '').toUpperCase()}** ${ACROWN}\n` +
-      `${BULLET} Code: \`${p.code || p.id}\`\n` +
-      `${BULLET} Stock: **${p.stock ?? 0}**\n` +
-      `${BULLET} Price: **${p.price ?? 'N/A'}** ${WORLDLOCK}\n` +
-      `${BULLET} Description: ${p.description || 'No description'}\n` +
+      `${WHITECROWN} **${(p.name || '').toUpperCase()}** ${WHITECROWN}\n` +
+      `${REDARROW} Code: \`${p.code || p.id}\`\n` +
+      `${REDARROW} Stock: **${p.stock ?? 0}**\n` +
+      `${REDARROW} Price: **${p.price ?? 'N/A'}** ${WORLDLOCK}\n` +
+      `${REDARROW} Description: ${p.description || 'No description'}\n` +
       '--------------------------------------------'
     ).join('\n');
     const howToBuy =
-      `${AWARN} **HOW TO BUY** ${AWARN}\n` +
-      `${BULLET} Click Button **Set GrowID**\n` +
-      `${BULLET} Click Button **My Info** To Check Your Information\n` +
-      `${BULLET} Click Button **Deposit** To See World Deposit\n` +
-      `${BULLET} Click Button **Buy** For Buying The Items`;
+      `${FAQ} **HOW TO BUY** ${FAQ}\n` +
+      `${REDARROW} Click Button **Set GrowID**\n` +
+      `${REDARROW} Click Button **My Info** To Check Your Information\n` +
+      `${REDARROW} Click Button **Deposit** To See World Deposit\n` +
+      `${REDARROW} Click Button **Buy** For Buying The Items`;
     const embed = new EmbedBuilder()
-      .setTitle('PRODUCT LIST')
+      .setTitle(`${WHITECROWN} PRODUCT LIST ${WHITECROWN}`)
       .setDescription(
         `Last Update: ${lastUpdate}\n` +
         '--------------------------------------------\n' +
@@ -197,29 +233,29 @@ module.exports = {
         '\n' +
         howToBuy
       )
-      .setColor(RED)
-      .setImage('https://media.discordapp.net/attachments/1225818847672537139/1251395315697979393/standard.gif?ex=68787e35&is=68772cb5&hm=1c528e9fe3ec08dcb5fdb63c0534c91ba4a847363a6cbd1a297e17b8cd576309&=');
+      .setColor(RED);
+      // .setImage('https://media.discordapp.net/attachments/1225818847672537139/1251395315697979393/standard.gif?ex=68787e35&is=68772cb5&hm=1c528e9fe3ec08dcb5fdb63c0534c91ba4a847363a6cbd1a297e17b8cd576309&=');
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('buy')
         .setLabel('Buy')
         .setEmoji('🛒')
-        .setStyle(ButtonStyle.Secondary),
+        .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
         .setCustomId('set_growid')
         .setLabel('Set GrowID')
         .setEmoji('<:char:1239164095396319252>')
-        .setStyle(ButtonStyle.Secondary),
+        .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
         .setCustomId('my_info')
         .setLabel('My Info')
-        .setEmoji('ℹ️')
-        .setStyle(ButtonStyle.Secondary),
+        .setEmoji(INFO)
+        .setStyle(ButtonStyle.Danger),
       new ButtonBuilder()
         .setCustomId('deposit')
         .setLabel('Deposit')
         .setEmoji('<:mcworld:1240203040317767739>')
-        .setStyle(ButtonStyle.Secondary)
+        .setStyle(ButtonStyle.Danger)
     );
     if (stockEntry && stockEntry.message) {
       message = stockEntry.message;

@@ -1,4 +1,4 @@
-const { EmbedBuilder, MessageFlags } = require('discord.js');
+const { EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { RED } = require('../colors/discordColors');
 
 function getAdminErrorEmbed() {
@@ -17,4 +17,14 @@ async function replyAdminError(interaction) {
   });
 }
 
-module.exports = { getAdminErrorEmbed, replyAdminError };
+function getSetGrowIdRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('set_growid')
+      .setLabel('Set GrowID')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('<:char:1239164095396319252>')
+  );
+}
+
+module.exports = { getAdminErrorEmbed, replyAdminError, getSetGrowIdRow };

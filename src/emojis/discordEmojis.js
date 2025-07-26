@@ -20,6 +20,14 @@ const FIRECHI = '<:firechi:1396706374322491473>';
 const SHOPCART = '<:shopcart:1396715074823000074>';
 const STATUSONLINE = '<:status_online:1396715854271615087>';
 const DONATION = '<:donationbox:1396739318067892305>';
+const WHITEARROW = '<a:white_arrow:1398377480422817833>';
+const REDARROW = '<a:red_arrow:1398379239132233790>';
+const FAQ = '<a:faq:1398380474253971630>';
+const OFFLINE = '<a:offline:1398380510178443335>';
+const CHILLCROWN = '<a:chill_crown:1398383015809519697>';
+const ALERT = '<a:alert:1398528036902801490>';
+const INFO = '<a:info:1398531280261480560>';
+const WHITECROWN = '<a:whitecrown:1398543248774922341>';
 
 module.exports = {
   WORLDLOCK,
@@ -43,5 +51,13 @@ module.exports = {
   FIRECHI,
   SHOPCART,
   STATUSONLINE,
-  DONATION
+  DONATION,
+  WHITEARROW,
+  REDARROW,
+  FAQ,
+  OFFLINE,
+  CHILLCROWN,
+  ALERT,
+  INFO,
+  WHITECROWN
 }; 
