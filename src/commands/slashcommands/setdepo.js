@@ -2,6 +2,7 @@ const { SlashCommandBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextI
 const { isAdmin } = require('../../middleware/adminCheck');
 const { isAuthorizedUser } = require('../../middleware/authorizedUser');
 const { replyAdminError } = require('../../utils/embedHelpers');
+const { WHITECROWN } = require('../../emojis/discordEmojis');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,7 +16,7 @@ module.exports = {
     // Show modal for input
     const modal = new ModalBuilder()
       .setCustomId('setdepo_modal')
-      .setTitle('Set Depo Information');
+      .setTitle(`${WHITECROWN} Set Depo Information ${WHITECROWN}`);
     const worldInput = new TextInputBuilder()
       .setCustomId('world')
       .setLabel('Depo World Name')

@@ -5,14 +5,47 @@ const { getWorldName, getOwnerName, getBotName } = require('../services/configSe
 const { RED } = require('../colors/discordColors');
 const { v5: uuidv5 } = require('uuid');
 const DISCORD_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
-const { WORLDLOCK, CHAR, SHOPCART, STATUSONLINE, OWNER, DONATION, ALERT } = require('../emojis/discordEmojis');
+const { WORLDLOCK, CHAR, SHOPCART, STATUSONLINE, OWNER, DONATION, ALERT, WHITECROWN, INFO, REDARROW, MONEYBAG, CYANARROW, DIAMONDLOCK, BGL } = require('../emojis/discordEmojis');
 const { getSetGrowIdRow, replyAdminError } = require('../utils/embedHelpers');
+
+// Function to format price with world locks, diamond locks, and blue gem locks
+function formatPriceWithEmojis(totalPrice, worldLockEmoji) {
+  const worldLocks = totalPrice % 100;
+  const diamondLocks = Math.floor((totalPrice % 10000) / 100);
+  const blueGemLocks = Math.floor(totalPrice / 10000);
+  
+  let result = '';
+  
+  if (blueGemLocks > 0) {
+    result += `${blueGemLocks} ${BGL}`;
+  }
+  
+  if (diamondLocks > 0) {
+    if (result) result += ' ';
+    result += `${diamondLocks} ${DIAMONDLOCK}`;
+  }
+  
+  if (worldLocks > 0) {
+    if (result) result += ' ';
+    result += `${worldLocks} ${worldLockEmoji}`;
+  }
+  
+  // If totalPrice is 0, show 0 world locks
+  if (totalPrice === 0) {
+    result = `0 ${worldLockEmoji}`;
+  }
+  
+  return result;
+}
 
 // Button cooldown configuration (in milliseconds)
 const BUTTON_COOLDOWN = 5 * 1000; // 5 seconds
+const PURCHASE_COOLDOWN = 10 * 1000; // 10 seconds for purchases
 
 // Map to track button cooldowns per user
 const buttonCooldowns = new Map();
+// Map to track purchase cooldowns per user
+const purchaseCooldowns = new Map();
 
 // Function to check if button is on cooldown for a user
 function isButtonOnCooldown(userId, buttonId) {
@@ -55,6 +88,36 @@ function getRemainingCooldown(userId, buttonId) {
   return Math.max(0, BUTTON_COOLDOWN - timeSinceLastClick);
 }
 
+// Function to check if purchase is on cooldown for a user
+function isPurchaseOnCooldown(userId) {
+  const lastPurchaseTime = purchaseCooldowns.get(userId);
+  
+  if (!lastPurchaseTime) return false;
+  
+  const timeSinceLastPurchase = Date.now() - lastPurchaseTime;
+  return timeSinceLastPurchase < PURCHASE_COOLDOWN;
+}
+
+// Function to set purchase cooldown for a user
+function setPurchaseCooldown(userId) {
+  purchaseCooldowns.set(userId, Date.now());
+  
+  // Clean up cooldown after it expires
+  setTimeout(() => {
+    purchaseCooldowns.delete(userId);
+  }, PURCHASE_COOLDOWN);
+}
+
+// Function to get remaining purchase cooldown time
+function getRemainingPurchaseCooldown(userId) {
+  const lastPurchaseTime = purchaseCooldowns.get(userId);
+  
+  if (!lastPurchaseTime) return 0;
+  
+  const timeSinceLastPurchase = Date.now() - lastPurchaseTime;
+  return Math.max(0, PURCHASE_COOLDOWN - timeSinceLastPurchase);
+}
+
 const buttonHandlers = {};
 
 buttonHandlers['buy'] = async (interaction) => {
@@ -65,16 +128,16 @@ buttonHandlers['buy'] = async (interaction) => {
     } catch (error) {
       if (error.code === 'PGRST116') {
         const notRegisteredEmbed = new EmbedBuilder()
-          .setTitle('❌ Registration Required')
+          .setTitle(`${ALERT} Registration Required`)
           .setDescription('It looks like you haven\'t registered yet. Let\'s get you started!')
           .setColor(RED)
           .addFields([
             {
-              name: '🔧 What to do next:',
+              name: `${INFO} What to do next:`,
               value: [
-                '• Click the button below to set your GrowID',
-                '• Make sure your GrowID is correct',
-                '• Then you can access product purchases'
+                `${REDARROW} Click the button below to set your GrowID`,
+                `${REDARROW} Make sure your GrowID is correct`,
+                `${REDARROW} Then you can access product purchases`
               ].join('\n'),
               inline: false
             }
@@ -95,27 +158,49 @@ buttonHandlers['buy'] = async (interaction) => {
     }
     const products = await getAllProductsWithStock();
     if (!products || products.length === 0) {
-      await interaction.reply({ content: 'No products available.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: `${ALERT} No products available.`, flags: MessageFlags.Ephemeral });
       return;
     }
     const options = products.map(p => ({
-      label: `${p.name} (${p.stock} in stock)` + (p.price ? ` - ${p.price} WL` : ''),
+      label: `${p.name.toUpperCase()}`,
       value: String(p.id),
-      description: p.code ? `Code: ${p.code}` : undefined
+      description: `${p.price} WorldLock | Code: ${p.code} | Stock: ${p.stock}`,
+      emoji: CYANARROW
     })).slice(0, 25);
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId('buy_product_select')
       .setPlaceholder('Select a product to buy')
       .addOptions(options);
     const row = new ActionRowBuilder().addComponents(selectMenu);
+    const buyEmbed = new EmbedBuilder()
+      .setTitle(`${WHITECROWN} Product Selection ${WHITECROWN}`)
+      .setDescription(`${REDARROW} Choose a product from the menu below to start your purchase.`)
+      .setColor(RED)
+      .addFields([
+        {
+          name: 'Available Products',
+          value: String(products.length),
+          inline: true
+        },
+        {
+          name: 'Your Balance',
+          value: `${formatPriceWithEmojis(user.world_lock || 0, WORLDLOCK)}`,
+          inline: true
+        }
+      ])
+      .setFooter({
+        text: 'Magaddon Store • Select your product',
+        iconURL: interaction.client.user.displayAvatarURL()
+      })
+      .setTimestamp();
     await interaction.reply({
-      content: 'Select a product to buy:',
+      embeds: [buyEmbed],
       components: [row],
       flags: MessageFlags.Ephemeral
     });
   } catch (error) {
     console.error('Error in buy button handler:', error);
-    await interaction.reply({ content: 'An error occurred while starting your purchase. Please try again or contact support.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: `${ALERT} An error occurred while starting your purchase. Please try again or contact support.`, flags: MessageFlags.Ephemeral });
   }
 };
 
@@ -141,7 +226,7 @@ buttonHandlers['set_growid'] = async (interaction) => {
     .setStyle(TextInputStyle.Short)
     .setRequired(true);
 
-  if (!existingUser) {
+  if (!existingUser || !existingUser.email) {
     const emailInput = new TextInputBuilder()
       .setCustomId('email')
       .setLabel('Email (optional, for website login)')
@@ -164,8 +249,8 @@ buttonHandlers['my_info'] = async (interaction) => {
     const user = await getUserWithRoleAndCreatedAt(interaction.user.id);
     if (!user || !user.username) {
       const notRegisteredEmbed = new EmbedBuilder()
-        .setTitle('🚫 Not Registered')
-        .setDescription('You need to set your GrowID to access your information.')
+        .setTitle(`${ALERT} Not Registered`)
+        .setDescription(`${REDARROW} You need to set your GrowID to access your information.`)
         .setColor(RED)
         .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
         .setFooter({
@@ -193,44 +278,27 @@ buttonHandlers['my_info'] = async (interaction) => {
     const accountType = user.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : 'Unknown';
     const memberSince = user.created_at ? `<t:${Math.floor(new Date(user.created_at).getTime() / 1000)}:R>` : 'Unknown';
     const userInfoEmbed = new EmbedBuilder()
-      .setTitle(`${interaction.user.displayName}'s Information`)
+      .setTitle(`${WHITECROWN} ${interaction.user.displayName}'s Information ${WHITECROWN}`)
       .setColor(RED)
-      .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true, size: 256 }))
       .addFields([
         {
           name: `${CHAR} GrowID`,
-          value: `\
-\
-yaml\n${user.growid || 'Not Set'}\
-\
-`,
+          value: `${user.growid || 'Not Set'}`,
           inline: true
         },
         {
-          name: `${WORLDLOCK} World Locks`,
-          value: `\
-\
-css\n${worldLockCount} WL\
-\
-`,
+          name: `${MONEYBAG} BALANCE`,
+          value: `${formatPriceWithEmojis(user.world_lock || 0, WORLDLOCK)}`,
           inline: true
         },
         {
           name: `${SHOPCART} Total Spent`,
-          value: `\
-\
-css\n${totalSpent} WL\
-\
-`,
+          value: `${formatPriceWithEmojis(user.total_spent || 0, WORLDLOCK)}`,
           inline: true
         },
         {
-          name: `${STATUSONLINE} Account Stats`,
-          value: [
-            `• **Registration Status:** Verified`,
-            `• **Account Type:** ${accountType}`,
-            `• **Member Since:** ${memberSince}`
-          ].join('\n'),
+          name: '',
+          value: `${REDARROW} **Member Since:** ${memberSince}`,
           inline: false
         }
       ])
@@ -255,17 +323,17 @@ css\n${totalSpent} WL\
     );
     if (isRegistrationError) {
       const registrationErrorEmbed = new EmbedBuilder()
-        .setTitle('❌ Registration Required')
-        .setDescription('It looks like you haven\'t registered yet. Let\'s get you started!')
+        .setTitle(`${ALERT} Registration Required`)
+        .setDescription(`${REDARROW} It looks like you haven't registered yet. Let's get you started!`)
         .setColor(RED)
         .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
         .addFields([
           {
-            name: '🔧 What to do next:',
+            name: `${INFO} What to do next:`,
             value: [
-              '• Click the button below to set your GrowID',
-              '• Make sure your GrowID is correct',
-              '• Start enjoying our services!'
+              `${REDARROW} Click the button below to set your GrowID`,
+              `${REDARROW} Make sure your GrowID is correct`,
+              `${REDARROW} Start enjoying our services!`
             ].join('\n'),
             inline: false
           }
@@ -282,16 +350,16 @@ css\n${totalSpent} WL\
       });
     } else {
       const systemErrorEmbed = new EmbedBuilder()
-        .setTitle('⚠️ System Error')
-        .setDescription('We encountered an issue while fetching your information.')
+        .setTitle(`${ALERT} System Error`)
+        .setDescription(`${REDARROW} We encountered an issue while fetching your information.`)
         .setColor(RED)
         .addFields([
           {
-            name: '🔄 What you can try:',
+            name: `${INFO} What you can try:`,
             value: [
-              '• Wait a moment and try again',
-              '• Check your internet connection',
-              '• Contact support if the issue persists'
+              `${REDARROW} Wait a moment and try again`,
+              `${REDARROW} Check your internet connection`,
+              `${REDARROW} Contact support if the issue persists`
             ].join('\n'),
             inline: false
           }
@@ -314,8 +382,8 @@ buttonHandlers['deposit'] = async (interaction) => {
     const user = await getUserWithRoleAndCreatedAt(interaction.user.id);
     if (!user || !user.username) {
       const notRegisteredEmbed = new EmbedBuilder()
-        .setTitle('🚫 Not Registered')
-        .setDescription('You need to set your GrowID to access deposit information.')
+        .setTitle(`${ALERT} Not Registered`)
+        .setDescription(`${REDARROW} You need to set your GrowID to access deposit information.`)
         .setColor(RED)
         .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
         .setFooter({
@@ -336,32 +404,21 @@ buttonHandlers['deposit'] = async (interaction) => {
       getBotName()
     ]);
     const depositEmbed = new EmbedBuilder()
-      .setTitle(`${interaction.user.displayName}'s Deposit Instructions`)
+      .setTitle(`${WHITECROWN} ${interaction.user.displayName}'s Deposit Instructions ${WHITECROWN}`)
       .setDescription(
-        `• **Depo World**: \`${worldName || 'Not set'}\` ${DONATION}\n` +
-        `• **Owner Name**: \`${ownerName || 'Not set'}\` ${OWNER}\n` +
-        `• **Bot Name**: \`${botName || 'Not set'}\` ${CHAR}`
+        `${REDARROW} **Depo World**: \`${worldName || 'Not set'}\`\n` +
+        `${REDARROW} **Owner Name**: \`${ownerName || 'Not set'}\`\n` +
+        `${REDARROW} **Bot Name**: \`${botName || 'Not set'}\``
       )
       .setColor(RED)
-      .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true, size: 256 }))
       .addFields([
         {
-          name: `${SHOPCART} Deposit Instructions`,
+          name: `${INFO} Important Notes ${INFO}`,
           value: [
-            `• **Step 1:** Visit the world \`${worldName}\``,
-            `• **Step 2:** Place your World Locks to donation box`,
-            `• **Step 3:** Take a screenshot as proof`,
-            `• **Step 4:** Wait for automatic processing`
-          ].join('\n'),
-          inline: false
-        },
-        {
-          name: `⚠️ Important Notes`,
-          value: [
-            `• **Always screenshot** your deposit for proof`,
-            `• Processing time: Usually within **5-10 minutes**`,
-            `• Contact support if your deposit isn't processed`,
-            `• Only deposit World Locks, other items won't be credited`
+            `${REDARROW} **Always screenshot** your deposit for proof.`,
+            `${REDARROW} Processing time: Usually within **1-5 seconds.**`,
+            `${REDARROW} Contact support if your deposit isn't processed.`,
+            `${REDARROW} Only deposit World Locks, other items won't be credited.`
           ].join('\n'),
           inline: false
         }
@@ -387,17 +444,17 @@ buttonHandlers['deposit'] = async (interaction) => {
     );
     if (isRegistrationError) {
       const registrationErrorEmbed = new EmbedBuilder()
-        .setTitle('❌ Registration Required')
-        .setDescription('It looks like you haven\'t registered yet. Let\'s get you started!')
+        .setTitle(`${ALERT} Registration Required`)
+        .setDescription(`${REDARROW} It looks like you haven't registered yet. Let's get you started!`)
         .setColor(RED)
         .setThumbnail(interaction.user.displayAvatarURL({ dynamic: true }))
         .addFields([
           {
-            name: '🔧 What to do next:',
+            name: `${INFO} What to do next:`,
             value: [
-              '• Click the button below to set your GrowID',
-              '• Make sure your GrowID is correct',
-              '• Then you can access deposit information'
+              `${REDARROW} Click the button below to set your GrowID`,
+              `${REDARROW} Make sure your GrowID is correct`,
+              `${REDARROW} Then you can access deposit information`
             ].join('\n'),
             inline: false
           }
@@ -414,16 +471,16 @@ buttonHandlers['deposit'] = async (interaction) => {
       });
     } else {
       const systemErrorEmbed = new EmbedBuilder()
-        .setTitle('⚠️ System Error')
-        .setDescription('We encountered an issue while fetching deposit information.')
+        .setTitle(`${ALERT} System Error`)
+        .setDescription(`${REDARROW} We encountered an issue while fetching deposit information.`)
         .setColor(RED)
         .addFields([
           {
-            name: '🔄 What you can try:',
+            name: `${INFO} What you can try:`,
             value: [
-              '• Wait a moment and try again',
-              '• Check your internet connection',
-              '• Contact support if the issue persists'
+              `${REDARROW} Wait a moment and try again`,
+              `${REDARROW} Check your internet connection`,
+              `${REDARROW} Contact support if the issue persists`
             ].join('\n'),
             inline: false
           }
@@ -445,7 +502,7 @@ async function handleButtonInteraction(interaction) {
   // Check if button is disabled (expired)
   if (interaction.component.disabled) {
     await interaction.reply({ 
-      content: '❌ This button has expired. Please use a fresh stock message.', 
+      content: `${ALERT} This button has expired. Please use a fresh stock message.`, 
       flags: MessageFlags.Ephemeral 
     });
     return;
@@ -472,8 +529,8 @@ async function handleButtonInteraction(interaction) {
   if (handler) {
     await handler(interaction);
   } else {
-    await interaction.reply({ content: 'Unknown button.', flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: `${ALERT} Unknown button.`, flags: MessageFlags.Ephemeral });
   }
 }
 
-module.exports = { buttonHandlers, handleButtonInteraction };
+module.exports = { buttonHandlers, handleButtonInteraction, isPurchaseOnCooldown, setPurchaseCooldown, getRemainingPurchaseCooldown };

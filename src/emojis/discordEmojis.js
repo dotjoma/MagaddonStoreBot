@@ -1,5 +1,6 @@
 const WORLDLOCK = '<:wl:1237744867254472704>';
 const DIAMONDLOCK = '<:dl:1237744864980893707>';
+const BGL = '<:bgl:1254314932481167494>';
 const DIRT = '<:dirt:1254316143619870741>';
 const OWNER = '<:owner:1240203671548203049>';
 const CHAR = '<:char:1239164095396319252>';
@@ -28,10 +29,15 @@ const CHILLCROWN = '<a:chill_crown:1398383015809519697>';
 const ALERT = '<a:alert:1398528036902801490>';
 const INFO = '<a:info:1398531280261480560>';
 const WHITECROWN = '<a:whitecrown:1398543248774922341>';
+const CHECK = '<a:check:1237743594966614106>'
+const MONEYBAG = '<a:gifmoneybag:1398564336913485926>';
+const ADDFILE = '<:addfile:1398571858751651880>';
+const CYANARROW = '<a:cyan_arrow:1398574977959334048>';
 
 module.exports = {
   WORLDLOCK,
   DIAMONDLOCK,
+  BGL,
   DIRT,
   OWNER,
   CHAR,
@@ -59,5 +65,9 @@ module.exports = {
   CHILLCROWN,
   ALERT,
   INFO,
-  WHITECROWN
+  WHITECROWN,
+  CHECK,
+  MONEYBAG,
+  ADDFILE,
+  CYANARROW
 }; 

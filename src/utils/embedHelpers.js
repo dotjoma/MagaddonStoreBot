@@ -1,16 +1,21 @@
 const { EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { RED } = require('../colors/discordColors');
+const { ALERT, REDARROW } = require('../emojis/discordEmojis');
 
-function getAdminErrorEmbed() {
+function getAdminErrorEmbed(interaction) {
   return new EmbedBuilder()
-    .setTitle('🚫 Access Denied')
-    .setDescription('You do not have permission to use this command.')
+    .setTitle(`${ALERT} Access Denied`)
+    .setDescription(`${REDARROW} You do not have permission to use this command.`)
     .setColor(RED)
+    .setFooter({
+      text: 'Magaddon Store • Access Denied',
+      iconURL: interaction.guild.iconURL()
+    })
     .setTimestamp();
 }
 
 async function replyAdminError(interaction) {
-  const errorEmbed = getAdminErrorEmbed();
+  const errorEmbed = getAdminErrorEmbed(interaction);
   await interaction.reply({
     embeds: [errorEmbed],
     flags: MessageFlags.Ephemeral

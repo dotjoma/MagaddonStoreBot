@@ -4,6 +4,7 @@ const { isAuthorizedUser } = require('../../middleware/authorizedUser');
 const { getTotalProducts, getActiveListings, getRevenueToday } = require('../../services/productService');
 const { RED } = require('../../colors/discordColors');
 const { replyAdminError } = require('../../utils/embedHelpers');
+const { WHITECROWN, REDARROW, WORLDLOCK } = require('../../emojis/discordEmojis');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -28,7 +29,7 @@ module.exports = {
       ]);
       totalProducts = tp;
       activeListings = al;
-      revenueToday = `${rt} WL`;
+      revenueToday = `${new Intl.NumberFormat('en-US').format(rt)}`;
     } catch (err) {
       console.error('Error fetching manageproduct stats:', err);
     }
@@ -37,66 +38,36 @@ module.exports = {
       .addComponents(
         new StringSelectMenuBuilder()
           .setCustomId('product_action')
-          .setPlaceholder('🛍️ Choose a product action')
+          .setPlaceholder('Choose a product action')
           .addOptions([
             {
               label: 'Create Product',
               description: 'Add a new item to your shop inventory',
               value: 'create',
-              emoji: '✨'
             },
             {
               label: 'View Product',
               description: 'Browse and inspect existing products',
               value: 'read',
-              emoji: '🔍'
             },
             {
               label: 'Update Product',
               description: 'Edit details of existing products',
               value: 'update',
-              emoji: '⚡'
             },
             {
               label: 'Delete Product',
               description: 'Remove products from your inventory',
               value: 'delete',
-              emoji: '💥'
             }
           ])
       );
 
     const embed = new EmbedBuilder()
-      .setTitle('Product Management Dashboard')
-      .setDescription('Welcome to your shop management center! Select an action below to manage your product inventory.')
+      .setTitle(`${WHITECROWN} Product Management Dashboard ${WHITECROWN}`)
+      .setDescription(`${REDARROW} Welcome to your shop management center! Select an action below to manage your product inventory.`)
       .setColor(RED)
-      .setThumbnail('https://cdn.discordapp.com/attachments/1234567890/shop-icon.png') // Add your shop icon URL here
       .addFields(
-        { 
-          name: '✨ Create Product', 
-          value: '`Add new items to expand your inventory`', 
-          inline: true 
-        },
-        { 
-          name: '🔍 View Product', 
-          value: '`Browse and inspect current stock`', 
-          inline: true 
-        },
-        { 
-          name: '⚡ Update Product', 
-          value: '`Modify pricing, descriptions & more`', 
-          inline: true 
-        },
-        { 
-          name: '💥 Delete Product', 
-          value: '`Remove items from your store`', 
-          inline: true 
-        },
-        {
-          name: '\u200b',
-          value: '\u200b',
-          inline: false
-        },
         {
           name: 'Quick Stats',
           value: `\`\`\`yml\nTotal Products: ${totalProducts}\nActive Listings: ${activeListings}\nRevenue Today: ${revenueToday}\`\`\``,

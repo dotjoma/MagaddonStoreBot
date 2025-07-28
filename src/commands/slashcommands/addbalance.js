@@ -6,8 +6,38 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const { v5: uuidv5 } = require('uuid');
 const DISCORD_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const { RED } = require('../../colors/discordColors');
-const { WORLDLOCK } = require('../../emojis/discordEmojis');
+const { WORLDLOCK, CHECK, REDARROW, ALERT, DIAMONDLOCK, BGL } = require('../../emojis/discordEmojis');
 const { replyAdminError } = require('../../utils/embedHelpers');
+
+// Function to format price with world locks, diamond locks, and blue gem locks
+function formatPriceWithEmojis(totalPrice, worldLockEmoji) {
+  const worldLocks = totalPrice % 100;
+  const diamondLocks = Math.floor((totalPrice % 10000) / 100);
+  const blueGemLocks = Math.floor(totalPrice / 10000);
+  
+  let result = '';
+  
+  if (blueGemLocks > 0) {
+    result += `${blueGemLocks} ${BGL}`;
+  }
+  
+  if (diamondLocks > 0) {
+    if (result) result += ' ';
+    result += `${diamondLocks} ${DIAMONDLOCK}`;
+  }
+  
+  if (worldLocks > 0) {
+    if (result) result += ' ';
+    result += `${worldLocks} ${worldLockEmoji}`;
+  }
+  
+  // If totalPrice is 0, show 0 world locks
+  if (totalPrice === 0) {
+    result = `0 ${worldLockEmoji}`;
+  }
+  
+  return result;
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -25,7 +55,7 @@ module.exports = {
     const userObj = interaction.options.getUser('user');
     const amount = interaction.options.getInteger('amount');
     if (amount <= 0) {
-      await interaction.reply({ content: 'Amount must be greater than 0.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: `${ALERT} Amount must be greater than 0.`, flags: MessageFlags.Ephemeral });
       return;
     }
     // Find user by Discord ID (UUID v5)
@@ -36,7 +66,7 @@ module.exports = {
       .eq('id', uuidId)
       .single();
     if (fetchError || !user) {
-      await interaction.reply({ content: 'User not found in database.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: `${ALERT} User not found in database.`, flags: MessageFlags.Ephemeral });
       return;
     }
     const newBalance = (user.world_lock || 0) + amount;
@@ -45,16 +75,14 @@ module.exports = {
       .update({ world_lock: newBalance })
       .eq('id', uuidId);
     if (error) {
-      await interaction.reply({ content: 'Failed to add balance.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: `${ALERT} Failed to add balance.`, flags: MessageFlags.Ephemeral });
       return;
     }
-    await interaction.reply({ content: `Added ${amount} WL to user ${userObj.tag}. New balance: ${newBalance} WL.`, flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: `${REDARROW} Added ${formatPriceWithEmojis(amount, WORLDLOCK)} to <@${userObj.id}>. New balance: ${formatPriceWithEmojis(newBalance, WORLDLOCK)}.`, flags: MessageFlags.Ephemeral });
     // Send embed to the channel
-    const member = await interaction.guild.members.fetch(userObj.id).catch(() => null);
-    const displayName = member ? member.displayName : userObj.tag;
     const embed = new EmbedBuilder()
-      .setTitle('Balance Added')
-      .setDescription(`• Successfully added **${amount}** ${WORLDLOCK} to **${displayName}**.\n• New Balance: **${newBalance}** ${WORLDLOCK}`)
+      .setTitle(`${CHECK} Balance Added`)
+      .setDescription(`${REDARROW} Successfully added **${formatPriceWithEmojis(amount, WORLDLOCK)}** to <@${userObj.id}>.\n${REDARROW} New Balance: **${formatPriceWithEmojis(newBalance, WORLDLOCK)}**`)
       .setColor(RED);
     await interaction.channel.send({ embeds: [embed] });
   },

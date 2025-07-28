@@ -1,0 +1,8 @@
+example1@email.com|password123
+example2@email.com|testpass456
+user3@domain.com|securepass789
+test4@example.org|mypassword2024
+demo5@test.com|demo123456
+account6@test.org
+just_a_username
+another_account@email.com 
